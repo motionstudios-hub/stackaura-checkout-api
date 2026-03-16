@@ -126,7 +126,6 @@ export class PaymentsController {
   })
   @Post('ozow/initiate')
   async initiateOzow(
-    @Req() req: ApiKeyRequest,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body(
       new ValidationPipe({
@@ -137,9 +136,7 @@ export class PaymentsController {
     )
     body: InitiateOzowPaymentDto,
   ) {
-    const merchantId = this.requireMerchantId(req);
     return this.paymentsService.initiateOzowPayment(
-      merchantId,
       body,
       idempotencyKey,
     );
@@ -151,11 +148,9 @@ export class PaymentsController {
   })
   @Get('ozow/:reference/status')
   async getOzowStatus(
-    @Req() req: ApiKeyRequest,
     @Param('reference') reference: string,
   ) {
-    const merchantId = this.requireMerchantId(req);
-    return this.paymentsService.getOzowPaymentStatus(merchantId, reference);
+    return this.paymentsService.getOzowPaymentStatus(reference);
   }
 
   @ApiOperation({
