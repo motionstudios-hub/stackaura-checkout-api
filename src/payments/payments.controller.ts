@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
+import { Public } from '../auth/public.decorator';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { InitiateOzowPaymentDto } from './ozow.dto';
 import { PaymentsService } from './payments.service';
@@ -105,6 +106,7 @@ export class PaymentsController {
     return this.paymentsService.getPaymentIntentById(merchantId, id);
   }
 
+  @Public()
   @ApiOperation({
     summary: 'Initiate Ozow payment and return form-post redirect payload',
   })
@@ -143,6 +145,7 @@ export class PaymentsController {
     );
   }
 
+  @Public()
   @ApiOperation({
     summary: 'Fetch the latest Ozow provider status for a payment reference',
   })
