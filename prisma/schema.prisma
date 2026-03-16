@@ -1,0 +1,397 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Merchant {
+  id                    String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  name                  String
+  email                 String            @unique
+  isActive              Boolean           @default(true)
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @default(now()) @updatedAt
+  payfastMerchantId     String?
+  payfastMerchantKey    String?
+  payfastPassphrase     String?
+  ozowSiteCode          String?
+  ozowPrivateKey        String?
+  ozowApiKey            String?
+  platformFeeBps        Int               @default(0)
+  platformFeeFixedCents Int               @default(0)
+  gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")
+  payfastIsSandbox      Boolean           @default(true)
+  apiKeys               ApiKey[]
+  payments              Payment[]
+  paymentIntents        PaymentIntent[]
+  subscriptions         Subscription[]
+  ledgerEntries         LedgerEntry[]
+  payouts               Payout[]
+  webhooks              WebhookEndpoint[]
+
+  memberships           Membership[]
+  routing               MerchantRouting?
+}
+
+model ApiKey {
+  id         String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId String
+
+  // Stored for display + quick identification in the dashboard
+  prefix     String?
+  last4      String?
+
+  // Hash of the full secret key (never store the plain value)
+  keyHash    String    @unique
+
+  label      String?
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+  revokedAt  DateTime?
+
+  merchant   Merchant  @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model User {
+  id           String       @id @default(dbgenerated("(gen_random_uuid())::text"))
+  email        String       @unique
+  passwordHash String
+
+  isActive     Boolean      @default(true)
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @default(now()) @updatedAt
+
+  memberships  Membership[]
+}
+
+model Membership {
+  id         String         @id @default(dbgenerated("(gen_random_uuid())::text"))
+  userId     String
+  merchantId String
+  role       MembershipRole @default(OWNER)
+
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @default(now()) @updatedAt
+
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  merchant   Merchant       @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, merchantId])
+  @@index([merchantId])
+  @@index([userId])
+}
+
+model MerchantRouting {
+  id              String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId       String   @unique
+
+  // Routing config per merchant (used by the gateway routing engine)
+  enabledGateways  Json     @default("[\"OZOW\", \"PAYFAST\"]")
+  gatewayOrder     Json     @default("[\"OZOW\", \"PAYFAST\"]")
+  failoverEnabled  Boolean  @default(true)
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @default(now()) @updatedAt
+
+  merchant         Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+enum MembershipRole {
+  OWNER
+  ADMIN
+  MEMBER
+  VIEWER
+}
+
+model Payment {
+  id               String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId       String
+  reference        String           @unique
+  currency         String           @default("ZAR")
+  amountCents      Int
+  status           PaymentStatus    @default(CREATED)
+  gateway          GatewayProvider?
+  checkoutToken    String           @unique
+  expiresAt        DateTime
+  customerEmail    String?
+  description      String?
+  gatewayRef       String?
+  rawGateway       Json?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @default(now()) @updatedAt
+  platformFeeCents Int              @default(0)
+  merchantNetCents Int              @default(0)
+  merchant         Merchant         @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  attempts         PaymentAttempt[]
+
+  @@index([merchantId])
+  @@index([merchantId, createdAt])
+  @@index([merchantId, reference])
+  @@index([status])
+}
+
+model PaymentAttempt {
+  id          String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  paymentId   String
+  gateway     GatewayProvider
+  status      String          @default("CREATED")
+  redirectUrl String
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @default(now()) @updatedAt
+  payment     Payment         @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentId, createdAt(sort: Desc)])
+}
+
+model Payout {
+  id              String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId      String
+  reference       String          @unique
+  currency        String          @default("ZAR")
+  amountCents     Int
+  status          PayoutStatus    @default(CREATED)
+  rail            PayoutRail
+  provider        PayoutProvider?
+  derivAccountId  String?
+  beneficiaryName String?
+  providerRef     String?
+  failureCode     String?
+  failureMessage  String?
+  rawProvider     Json?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @default(now()) @updatedAt
+  idempotencyKey  String?
+  merchant        Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@unique([merchantId, idempotencyKey])
+  @@index([merchantId])
+  @@index([status])
+  @@index([rail])
+}
+
+model WebhookEndpoint {
+  id         String            @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId String
+  url        String
+  secret     String
+  isActive   Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @default(now()) @updatedAt
+  deliveries WebhookDelivery[]
+  merchant   Merchant          @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+}
+
+model WebhookDelivery {
+  id                String                @id @default(dbgenerated("(gen_random_uuid())::text"))
+  webhookEndpointId String
+  event             String
+  payload           Json
+  status            WebhookDeliveryStatus @default(PENDING)
+  attempts          Int                   @default(0)
+  lastStatusCode    Int?
+  lastError         String?
+  nextAttemptAt     DateTime?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @default(now()) @updatedAt
+  webhookEndpoint   WebhookEndpoint       @relation(fields: [webhookEndpointId], references: [id], onDelete: Cascade)
+
+  @@index([webhookEndpointId])
+  @@index([status])
+  @@index([nextAttemptAt])
+}
+
+model WebhookEvent {
+  id              String    @id @default(dbgenerated("(gen_random_uuid())::text"))
+  provider        String
+  providerEventId String
+  eventType       String?
+  payoutReference String?
+  payload         Json
+  signature       String?
+  processedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @default(now()) @updatedAt
+
+  @@unique([provider, providerEventId])
+  @@index([payoutReference])
+  @@index([processedAt])
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+  REFUNDED
+}
+
+enum GatewayProvider {
+  PAYFAST
+  OZOW
+  PEACH
+}
+
+enum PayoutStatus {
+  CREATED
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+enum PayoutRail {
+  DERIV
+  BANK_EFT
+  CARD
+  CRYPTO
+}
+
+enum PayoutProvider {
+  DERIV_PA
+}
+
+enum WebhookDeliveryStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  SKIPPED
+}
+
+model PaymentIntent {
+  id            String        @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId    String
+  amountCents   Int
+  currency      String        @default("ZAR")
+  status        IntentStatus  @default(REQUIRES_PAYMENT_METHOD)
+  customerEmail String?
+  description   String?
+  metadata      Json?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @default(now()) @updatedAt
+
+  merchant      Merchant      @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  attempts      PaymentAttemptIntent[]
+
+  @@index([merchantId])
+  @@index([status])
+}
+
+model PaymentAttemptIntent {
+  id             String           @id @default(dbgenerated("(gen_random_uuid())::text"))
+  paymentIntentId String
+  gateway        GatewayProvider
+  status         String           @default("CREATED")
+  gatewayRef     String?
+  rawGateway     Json?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @default(now()) @updatedAt
+
+  paymentIntent  PaymentIntent    @relation(fields: [paymentIntentId], references: [id], onDelete: Cascade)
+
+  @@index([paymentIntentId])
+}
+
+model Subscription {
+  id            String             @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId    String
+  customerEmail String
+  amountCents   Int
+  currency      String             @default("ZAR")
+  interval      SubscriptionInterval
+  status        SubscriptionStatus @default(ACTIVE)
+  nextBillingAt DateTime
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @default(now()) @updatedAt
+
+  merchant      Merchant           @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([status])
+}
+
+model LedgerEntry {
+  id              String          @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId      String
+
+  // Logical reference to what generated this ledger movement
+  paymentIntentId String?
+  paymentId       String?
+  payoutId        String?
+
+  // Double-entry accounting fields
+  account         LedgerAccount
+  direction       LedgerDirection
+
+  amountCents     Int
+  currency        String          @default("ZAR")
+
+  // Optional running balance snapshot for fast analytics
+  balanceAfter    Int?
+
+  description     String?
+  createdAt       DateTime        @default(now())
+
+  merchant        Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+
+  @@index([merchantId])
+  @@index([account])
+  @@index([paymentIntentId])
+}
+
+enum IntentStatus {
+  REQUIRES_PAYMENT_METHOD
+  REQUIRES_CONFIRMATION
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum SubscriptionInterval {
+  DAY
+  WEEK
+  MONTH
+  YEAR
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELLED
+}
+
+enum LedgerAccount {
+  CUSTOMER_FUNDS
+  MERCHANT_BALANCE
+  PLATFORM_FEES
+  GATEWAY_SETTLEMENT
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+model IdempotencyKey {
+  id              String   @id @default(dbgenerated("(gen_random_uuid())::text"))
+  merchantId      String
+  scope           String
+  idempotencyKey  String
+  requestHash     String
+  paymentId       String?
+  paymentIntentId String?
+  createdAt       DateTime @default(now())
+
+  @@unique([merchantId, scope, idempotencyKey])
+  @@index([merchantId])
+  @@index([paymentId])
+  @@index([paymentIntentId])
+}

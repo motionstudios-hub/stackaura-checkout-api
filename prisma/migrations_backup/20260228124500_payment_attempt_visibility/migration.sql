@@ -1,0 +1,6 @@
+ALTER TABLE "PaymentAttempt"
+ADD COLUMN "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+UPDATE "PaymentAttempt"
+SET "updatedAt" = COALESCE("createdAt", CURRENT_TIMESTAMP)
+WHERE "updatedAt" IS NULL;
