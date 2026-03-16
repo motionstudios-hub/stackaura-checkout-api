@@ -59,7 +59,12 @@ export async function bootstrap() {
   app.use(cookieParser());
 
   app.enableCors({
-    origin: ['http://127.0.0.1:3000', 'http://localhost:3000'],
+    origin: [
+      'https://stackaura.co.za',
+      'https://www.stackaura.co.za',
+      'http://127.0.0.1:3000',
+      'http://localhost:3000',
+    ],
     credentials: true,
   });
 
