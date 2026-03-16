@@ -69,6 +69,12 @@ export type OzowRedirectForm = {
   fields: Record<string, string>;
 };
 
+export type OzowHashMaterial = {
+  orderedFields: Array<{ key: string; value: string }>;
+  hashInput: string;
+  hashCheck: string;
+};
+
 type BuildOzowPaymentFormArgs = {
   siteCode: string | null;
   privateKey: string | null;
@@ -153,19 +159,36 @@ export function computeOzowHashCheck(
   privateKey: string | null | undefined,
   orderedKeys: readonly string[],
 ) {
+  return buildOzowHashMaterial(fields, privateKey, orderedKeys).hashCheck;
+}
+
+export function buildOzowHashMaterial(
+  fields: Record<string, string>,
+  privateKey: string | null | undefined,
+  orderedKeys: readonly string[],
+): OzowHashMaterial {
   const normalizedPrivateKey = trimToNull(privateKey);
   if (!normalizedPrivateKey) {
     throw new Error('Ozow private key is required');
   }
 
-  const joined = orderedKeys
-    .map((key) => trimToNull(fields[key]))
-    .filter((value): value is string => value !== null)
-    .join('');
+  const orderedFields = orderedKeys.flatMap((key) => {
+    const value = fields[key];
+    if (typeof value !== 'string' || value.length === 0) {
+      return [];
+    }
 
-  return createHash('sha512')
-    .update(`${joined}${normalizedPrivateKey}`.toLowerCase(), 'utf8')
-    .digest('hex');
+    return [{ key, value }];
+  });
+  const hashInput = orderedFields.map((field) => field.value).join('');
+
+  return {
+    orderedFields,
+    hashInput,
+    hashCheck: createHash('sha512')
+      .update(`${hashInput}${normalizedPrivateKey}`.toLowerCase(), 'utf8')
+      .digest('hex'),
+  };
 }
 
 export function buildOzowPaymentForm(
@@ -176,44 +199,49 @@ export function buildOzowPaymentForm(
     throw new Error('Ozow site code is required');
   }
 
-  const fields: Record<string, string> = {
-    SiteCode: siteCode,
-    CountryCode: 'ZA',
-    CurrencyCode: args.currency.trim().toUpperCase(),
-    Amount: (args.amountCents / 100).toFixed(2),
-    TransactionReference: args.reference.trim(),
-    BankReference: deriveOzowBankReference(
-      args.reference,
-      args.bankReference ?? null,
-    ),
-    CancelUrl: trimToNull(args.cancelUrl) ?? OZOW_CANCEL_URL,
-    ErrorUrl: trimToNull(args.errorUrl) ?? OZOW_ERROR_URL,
-    SuccessUrl: trimToNull(args.successUrl) ?? OZOW_SUCCESS_URL,
-    NotifyUrl: trimToNull(args.notifyUrl) ?? OZOW_NOTIFY_URL,
-    IsTest: args.isTest ? 'true' : 'false',
-  };
+  const fieldEntries: Array<[string, string]> = [
+    ['SiteCode', siteCode],
+    ['CountryCode', 'ZA'],
+    ['CurrencyCode', args.currency.trim().toUpperCase()],
+    ['Amount', (args.amountCents / 100).toFixed(2)],
+    ['TransactionReference', args.reference.trim()],
+    [
+      'BankReference',
+      deriveOzowBankReference(args.reference, args.bankReference ?? null),
+    ],
+  ];
 
-  const optionalFields = [
+  const optionalFields: Array<[string, string | null | undefined]> = [
     ['Optional1', args.optional1],
     ['Optional2', args.optional2],
     ['Optional3', args.optional3],
     ['Optional4', args.optional4],
     ['Optional5', args.optional5],
     ['Customer', args.customer],
-  ] as const;
+  ];
 
   for (const [key, value] of optionalFields) {
     const trimmed = trimToNull(value);
     if (trimmed) {
-      fields[key] = trimmed;
+      fieldEntries.push([key, trimmed]);
     }
   }
 
-  fields.HashCheck = computeOzowHashCheck(
+  fieldEntries.push(
+    ['CancelUrl', trimToNull(args.cancelUrl) ?? OZOW_CANCEL_URL],
+    ['ErrorUrl', trimToNull(args.errorUrl) ?? OZOW_ERROR_URL],
+    ['SuccessUrl', trimToNull(args.successUrl) ?? OZOW_SUCCESS_URL],
+    ['NotifyUrl', trimToNull(args.notifyUrl) ?? OZOW_NOTIFY_URL],
+    ['IsTest', args.isTest ? 'true' : 'false'],
+  );
+
+  const fields = Object.fromEntries(fieldEntries) as Record<string, string>;
+  const hashMaterial = buildOzowHashMaterial(
     fields,
     args.privateKey,
     OZOW_REQUEST_HASH_FIELDS,
   );
+  fields.HashCheck = hashMaterial.hashCheck;
 
   return {
     action: OZOW_PAYMENT_URL,

@@ -1,4 +1,4 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import { Injectable, Logger, NotImplementedException } from '@nestjs/common';
 import {
   GatewayAdapter,
   GatewayCreatePaymentInput,
@@ -7,7 +7,12 @@ import {
   GatewayRefundResult,
   GatewayStatusResult,
 } from './gateway.types';
-import { buildOzowPaymentForm, resolveOzowConfig } from './ozow.config';
+import {
+  buildOzowHashMaterial,
+  buildOzowPaymentForm,
+  OZOW_REQUEST_HASH_FIELDS,
+  resolveOzowConfig,
+} from './ozow.config';
 
 type OzowStatusLookupArgs = {
   reference: string;
@@ -28,6 +33,8 @@ type OzowTransactionStatus = {
 
 @Injectable()
 export class OzowGateway implements GatewayAdapter {
+  private readonly logger = new Logger(OzowGateway.name);
+
   async createPayment(
     input: GatewayCreatePaymentInput,
   ): Promise<GatewayCreatePaymentResult> {
@@ -47,6 +54,7 @@ export class OzowGateway implements GatewayAdapter {
       notifyUrl: input.metadata?.notifyUrl ?? config.notifyUrl,
       isTest: config.isTest,
     });
+    this.logRedirectFormDebug(input.reference, redirectForm.fields, config.privateKey);
 
     return {
       redirectUrl: redirectForm.action,
@@ -146,6 +154,35 @@ export class OzowGateway implements GatewayAdapter {
       ozowIsTest:
         typeof config?.ozowIsTest === 'boolean' ? config.ozowIsTest : null,
     };
+  }
+
+  private logRedirectFormDebug(
+    reference: string,
+    fields: Record<string, string>,
+    privateKey: string | null,
+  ) {
+    const shouldLog =
+      process.env.OZOW_DEBUG_LOGS?.trim().toLowerCase() === 'true';
+    if (!shouldLog) {
+      return;
+    }
+
+    const hashMaterial = buildOzowHashMaterial(
+      fields,
+      privateKey,
+      OZOW_REQUEST_HASH_FIELDS,
+    );
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'ozow.redirect_form.generated',
+        reference,
+        fields,
+        hashFieldOrder: hashMaterial.orderedFields.map((field) => field.key),
+        hashInput: hashMaterial.hashInput,
+        hashCheck: fields.HashCheck,
+      }),
+    );
   }
 
   private mapProviderStatus(providerStatus: string | null) {
