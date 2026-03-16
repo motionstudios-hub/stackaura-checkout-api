@@ -14,7 +14,6 @@ import {
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { Public } from '../auth/public.decorator';
-import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { InitiateOzowPaymentDto } from './ozow.dto';
 import { PaymentsService } from './payments.service';
 import type {
@@ -31,7 +30,7 @@ import type {
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
-  private requireMerchantId(req: ApiKeyRequest) {
+  private requireMerchantId(req: any) {
     const merchantId = req.apiKeyAuth?.merchantId;
     if (!merchantId) {
       throw new UnauthorizedException('Invalid API key');
@@ -57,7 +56,7 @@ export class PaymentsController {
   })
   @Post('intents')
   async createIntent(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() body: CreatePaymentIntentDto,
   ) {
@@ -85,7 +84,7 @@ export class PaymentsController {
   })
   @Post('subscriptions')
   async createSubscription(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Body() body: CreateSubscriptionDto,
   ) {
     const merchantId = this.requireMerchantId(req);
@@ -94,14 +93,14 @@ export class PaymentsController {
 
   @ApiOperation({ summary: 'List merchant subscriptions' })
   @Get('subscriptions')
-  async listSubscriptions(@Req() req: ApiKeyRequest) {
+  async listSubscriptions(@Req() req: any) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.listSubscriptions(merchantId);
   }
 
   @ApiOperation({ summary: 'Retrieve payment intent by ID' })
   @Get('intents/:id')
-  async getIntent(@Req() req: ApiKeyRequest, @Param('id') id: string) {
+  async getIntent(@Req() req: any, @Param('id') id: string) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.getPaymentIntentById(merchantId, id);
   }
@@ -137,6 +136,7 @@ export class PaymentsController {
     body: InitiateOzowPaymentDto,
   ) {
     return this.paymentsService.initiateOzowPayment(
+      'public',
       body,
       idempotencyKey,
     );
@@ -150,7 +150,7 @@ export class PaymentsController {
   async getOzowStatus(
     @Param('reference') reference: string,
   ) {
-    return this.paymentsService.getOzowPaymentStatus(reference);
+    return this.paymentsService.getOzowPaymentStatus('public', reference);
   }
 
   @ApiOperation({
@@ -172,7 +172,7 @@ export class PaymentsController {
   })
   @Post()
   async create(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
     @Body() body: CreatePaymentDto,
   ) {
@@ -185,7 +185,7 @@ export class PaymentsController {
   }
 
   @Get()
-  async list(@Req() req: ApiKeyRequest, @Query() query: ListPaymentsQuery) {
+  async list(@Req() req: any, @Query() query: ListPaymentsQuery) {
     const merchantId = this.requireMerchantId(req);
     return this.paymentsService.listPayments(merchantId, query);
   }
@@ -195,7 +195,7 @@ export class PaymentsController {
   })
   @Post(':reference/ledger')
   async recordLedger(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Param('reference') reference: string,
   ) {
     const merchantId = this.requireMerchantId(req);
@@ -214,7 +214,7 @@ export class PaymentsController {
   })
   @Get(':reference/attempts')
   async listAttempts(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Param('reference') reference: string,
   ) {
     const merchantId = this.requireMerchantId(req);
@@ -224,7 +224,7 @@ export class PaymentsController {
   @ApiOperation({ summary: 'Get payment by merchant-scoped reference' })
   @Get(':reference')
   async getByReference(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Param('reference') reference: string,
   ) {
     const merchantId = this.requireMerchantId(req);
@@ -236,7 +236,7 @@ export class PaymentsController {
   })
   @Post(':reference/failover')
   async failover(
-    @Req() req: ApiKeyRequest,
+    @Req() req: any,
     @Param('reference') reference: string,
   ) {
     const merchantId = this.requireMerchantId(req);
