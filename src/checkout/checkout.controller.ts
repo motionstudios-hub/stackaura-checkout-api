@@ -35,22 +35,25 @@ export class CheckoutController {
   }
 
   @Get('success')
-  success(
+  async success(
     @Query() query: Record<string, string | string[] | undefined>,
     @Res() res: Response,
   ) {
     const reference = this.extractPaymentReference(query);
+    const context = await this.loadStatusPageContext(reference);
+    const content = this.resolveStatusContent('success', context);
+
     return res
       .status(200)
       .type('html')
       .send(
         this.renderStatusPage({
-          title: 'Payment successful',
-          status: 'SUCCESS',
-          message:
-            'Your payment was completed successfully. You can now return to the merchant.',
-          reference,
-          tone: 'success',
+          title: content.title,
+          status: content.status,
+          message: content.message,
+          reference: context?.reference ?? reference,
+          gateway: context?.gateway ?? null,
+          tone: content.tone,
         }),
       );
   }
@@ -188,6 +191,8 @@ export class CheckoutController {
     route: 'cancel' | 'error',
   ) {
     const reference = this.extractPaymentReference(query);
+    const context = await this.loadStatusPageContext(reference);
+    const content = this.resolveStatusContent(route, context);
 
     if (!reference) {
       return res
@@ -195,14 +200,12 @@ export class CheckoutController {
         .type('html')
         .send(
           this.renderStatusPage({
-            title: route === 'cancel' ? 'Payment cancelled' : 'Payment error',
-            status: route.toUpperCase(),
-            message:
-              route === 'cancel'
-                ? 'This payment was cancelled before completion.'
-                : 'We could not complete this payment and no additional gateway was available.',
+            title: content.title,
+            status: content.status,
+            message: content.message,
             reference: null,
-            tone: route === 'cancel' ? 'warning' : 'error',
+            gateway: null,
+            tone: content.tone,
           }),
         );
     }
@@ -219,16 +222,105 @@ export class CheckoutController {
       .type('html')
       .send(
         this.renderStatusPage({
-          title: route === 'cancel' ? 'Payment cancelled' : 'Payment error',
-          status: route.toUpperCase(),
-          message:
-            route === 'cancel'
-              ? 'The payment did not complete. Stackaura checked for another gateway, but no further failover path was available.'
-              : 'The payment hit an error. Stackaura checked for another gateway, but no further failover path was available.',
-          reference,
-          tone: route === 'cancel' ? 'warning' : 'error',
+          title: content.title,
+          status: content.status,
+          message: content.message,
+          reference: context?.reference ?? reference,
+          gateway: context?.gateway ?? null,
+          tone: content.tone,
         }),
       );
+  }
+
+  private async loadStatusPageContext(reference: string | null) {
+    const normalizedReference = reference?.trim();
+    if (!normalizedReference) {
+      return null;
+    }
+
+    const payment = await this.prisma.payment.findFirst({
+      where: { reference: normalizedReference },
+      select: {
+        reference: true,
+        gateway: true,
+        rawGateway: true,
+      },
+    });
+
+    if (!payment) {
+      return null;
+    }
+
+    const rawGateway = this.asRecord(payment.rawGateway);
+    const publicFlow = this.asRecord(rawGateway?.publicFlow);
+
+    return {
+      reference: payment.reference,
+      gateway:
+        typeof payment.gateway === 'string' && payment.gateway.trim()
+          ? payment.gateway.trim()
+          : null,
+      isSignupFlow: publicFlow?.flow === 'merchant_signup',
+    };
+  }
+
+  private resolveStatusContent(
+    route: 'success' | 'cancel' | 'error',
+    context: { isSignupFlow: boolean } | null,
+  ) {
+    if (context?.isSignupFlow) {
+      if (route === 'success') {
+        return {
+          title: 'Merchant activation successful',
+          status: 'SUCCESS',
+          message:
+            'Your activation payment was completed successfully. Your merchant account can now be activated.',
+          tone: 'success' as const,
+        };
+      }
+
+      if (route === 'cancel') {
+        return {
+          title: 'Merchant activation cancelled',
+          status: 'CANCELLED',
+          message:
+            'The merchant activation payment was cancelled before completion.',
+          tone: 'warning' as const,
+        };
+      }
+
+      return {
+        title: 'Merchant activation failed',
+        status: 'ERROR',
+        message: 'We couldn’t complete the merchant activation payment.',
+        tone: 'error' as const,
+      };
+    }
+
+    if (route === 'success') {
+      return {
+        title: 'Payment successful',
+        status: 'SUCCESS',
+        message: 'Your payment was completed successfully.',
+        tone: 'success' as const,
+      };
+    }
+
+    if (route === 'cancel') {
+      return {
+        title: 'Payment cancelled',
+        status: 'CANCELLED',
+        message: 'The payment was cancelled before completion.',
+        tone: 'warning' as const,
+      };
+    }
+
+    return {
+      title: 'Payment failed',
+      status: 'ERROR',
+      message: 'We couldn’t complete the payment.',
+      tone: 'error' as const,
+    };
   }
 
   private renderCheckoutPage(args: {
@@ -543,6 +635,7 @@ export class CheckoutController {
     status: string;
     message: string;
     reference: string | null;
+    gateway: string | null;
     tone: 'success' | 'warning' | 'error';
   }) {
     const accent =
@@ -617,6 +710,7 @@ export class CheckoutController {
       <div class="meta">
         <div><strong>Powered by:</strong> Stackaura Checkout</div>
         <div style="margin-top:8px;"><strong>Reference:</strong> ${this.escapeHtml(args.reference ?? 'Unavailable')}</div>
+        ${args.gateway ? `<div style="margin-top:8px;"><strong>Gateway:</strong> ${this.escapeHtml(args.gateway)}</div>` : ''}
       </div>
     </section>
   </body>
@@ -634,6 +728,14 @@ export class CheckoutController {
       .replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#39;');
+  }
+
+  private asRecord(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    return value as Record<string, unknown>;
   }
 
   private extractPaymentReference(

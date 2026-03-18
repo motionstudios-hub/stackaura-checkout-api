@@ -82,7 +82,97 @@ describe('CheckoutController', () => {
     );
     expect(status).toHaveBeenCalledWith(200);
     expect(type).toHaveBeenCalledWith('html');
-    expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment error'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment failed'));
     expect(send).toHaveBeenCalledWith(expect.stringContaining('INV-2'));
+  });
+
+  it('renders payment-specific success copy for normal checkout flows', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-success',
+      gateway: 'YOCO',
+      rawGateway: {
+        provider: 'YOCO',
+      },
+    });
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.success({ reference: 'INV-success' }, res);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Payment successful'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Your payment was completed successfully.'),
+    );
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('YOCO'));
+  });
+
+  it('renders activation-specific success copy for merchant signup flows', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'SIGNUP-123',
+      gateway: 'OZOW',
+      rawGateway: {
+        publicFlow: {
+          flow: 'merchant_signup',
+        },
+      },
+    });
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.success({ reference: 'SIGNUP-123' }, res);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Merchant activation successful'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining(
+        'Your activation payment was completed successfully.',
+      ),
+    );
+  });
+
+  it('renders payment-specific cancel copy for normal checkout flows without failover', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      reference: 'INV-cancel',
+      gateway: 'YOCO',
+      rawGateway: {
+        provider: 'YOCO',
+      },
+    });
+    paymentsService.autoFailoverByReference.mockResolvedValue(null);
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.cancel({ reference: 'INV-cancel' }, res);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Payment cancelled'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('The payment was cancelled before completion.'),
+    );
   });
 });
