@@ -16,6 +16,7 @@ import {
   YOCO_WEBHOOKS_API_URL,
   assertYocoConfigConsistency,
   resolveYocoConfig,
+  resolveYocoRedirectUrls,
 } from './yoco.config';
 import { mapYocoCheckoutStatusToGatewayStatus } from './yoco.lifecycle';
 
@@ -64,15 +65,18 @@ export class YocoGateway implements GatewayAdapter {
       );
     }
 
+    const redirectUrls = resolveYocoRedirectUrls({
+      successUrl: input.metadata?.returnUrl,
+      cancelUrl: input.metadata?.cancelUrl,
+      failureUrl: input.metadata?.errorUrl,
+    });
+
     const requestPayload = {
       amount: input.amountCents,
       currency,
-      successUrl:
-        input.metadata?.returnUrl?.trim() ?? this.defaultRedirectUrl('success'),
-      cancelUrl:
-        input.metadata?.cancelUrl?.trim() ?? this.defaultRedirectUrl('cancel'),
-      failureUrl:
-        input.metadata?.errorUrl?.trim() ?? this.defaultRedirectUrl('error'),
+      successUrl: redirectUrls.successUrl,
+      cancelUrl: redirectUrls.cancelUrl,
+      failureUrl: redirectUrls.failureUrl,
       clientReferenceId: input.paymentId,
       externalId: input.reference,
       metadata: {
@@ -363,17 +367,6 @@ export class YocoGateway implements GatewayAdapter {
       yocoTestMode:
         typeof config?.yocoTestMode === 'boolean' ? config.yocoTestMode : null,
     };
-  }
-
-  private defaultRedirectUrl(
-    route: 'success' | 'cancel' | 'error',
-  ) {
-    const baseUrl =
-      process.env.APP_URL?.trim() ||
-      process.env.PUBLIC_APP_URL?.trim() ||
-      'http://127.0.0.1:3001';
-
-    return `${baseUrl}/v1/checkout/${route}`;
   }
 
   private async readJsonRecord(response: Response) {

@@ -1,6 +1,9 @@
 export const YOCO_CHECKOUT_API_URL = 'https://payments.yoco.com/api/checkouts';
 export const YOCO_WEBHOOKS_API_URL = 'https://payments.yoco.com/api/webhooks';
 export const YOCO_DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 180;
+export const YOCO_SUCCESS_URL = 'https://stackaura.co.za/payments/success';
+export const YOCO_CANCEL_URL = 'https://stackaura.co.za/payments/cancel';
+export const YOCO_ERROR_URL = 'https://stackaura.co.za/payments/error';
 
 export type YocoConfigSource = {
   yocoPublicKey?: string | null;
@@ -80,4 +83,49 @@ export function assertYocoConfigConsistency(config: ResolvedYocoConfig) {
   if (detectedMode !== null && detectedMode !== config.testMode) {
     throw new Error('Yoco keys do not match the selected testMode');
   }
+}
+
+export function resolveYocoRedirectUrl(
+  candidate: string | null | undefined,
+  fallback: string,
+  label: 'successUrl' | 'cancelUrl' | 'failureUrl',
+) {
+  const resolved = trimToNull(candidate) ?? fallback;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(resolved);
+  } catch {
+    throw new Error(`Yoco ${label} must be an absolute HTTPS URL`);
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Yoco ${label} must be an absolute HTTPS URL`);
+  }
+
+  return parsed.toString();
+}
+
+export function resolveYocoRedirectUrls(args: {
+  successUrl?: string | null;
+  cancelUrl?: string | null;
+  failureUrl?: string | null;
+}) {
+  return {
+    successUrl: resolveYocoRedirectUrl(
+      args.successUrl,
+      YOCO_SUCCESS_URL,
+      'successUrl',
+    ),
+    cancelUrl: resolveYocoRedirectUrl(
+      args.cancelUrl,
+      YOCO_CANCEL_URL,
+      'cancelUrl',
+    ),
+    failureUrl: resolveYocoRedirectUrl(
+      args.failureUrl,
+      YOCO_ERROR_URL,
+      'failureUrl',
+    ),
+  };
 }

@@ -63,6 +63,79 @@ describe('YocoGateway', () => {
     );
   });
 
+  it('falls back blank redirect URLs to the Stackaura production payment pages', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_456',
+        redirectUrl: 'https://c.yoco.com/checkout/abc456',
+        processingMode: 'test',
+      }),
+    });
+
+    await gateway.createPayment({
+      merchantId: 'm-1',
+      paymentId: 'p-2',
+      reference: 'INV-YOCO-2',
+      amountCents: 9900,
+      currency: 'ZAR',
+      config: {
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+      },
+      metadata: {
+        returnUrl: '',
+        cancelUrl: '   ',
+        errorUrl: '',
+      },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://payments.yoco.com/api/checkouts',
+      expect.objectContaining({
+        body: JSON.stringify({
+          amount: 9900,
+          currency: 'ZAR',
+          successUrl: 'https://stackaura.co.za/payments/success',
+          cancelUrl: 'https://stackaura.co.za/payments/cancel',
+          failureUrl: 'https://stackaura.co.za/payments/error',
+          clientReferenceId: 'p-2',
+          externalId: 'INV-YOCO-2',
+          metadata: {
+            merchantId: 'm-1',
+            paymentId: 'p-2',
+            reference: 'INV-YOCO-2',
+          },
+        }),
+      }),
+    );
+  });
+
+  it('rejects non-absolute redirect URLs before calling Yoco', async () => {
+    await expect(
+      gateway.createPayment({
+        merchantId: 'm-1',
+        paymentId: 'p-bad-url',
+        reference: 'INV-YOCO-BAD-URL',
+        amountCents: 9900,
+        currency: 'ZAR',
+        config: {
+          yocoPublicKey: 'pk_test_public',
+          yocoSecretKey: 'sk_test_secret',
+          yocoTestMode: true,
+        },
+        metadata: {
+          returnUrl: '/payments/success',
+          cancelUrl: 'https://stackaura.co.za/payments/cancel',
+          errorUrl: 'https://stackaura.co.za/payments/error',
+        },
+      }),
+    ).rejects.toThrow('Yoco successUrl must be an absolute HTTPS URL');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('rejects sub-R2.00 Yoco payments before calling the provider', async () => {
     await expect(
       gateway.createPayment({
