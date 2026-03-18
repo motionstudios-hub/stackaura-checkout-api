@@ -210,34 +210,43 @@ describe('PaymentsService', () => {
     expect(result.merchantNetCents).toBe(1000);
   });
 
-  it('AUTO chooses OZOW first when OZOW is configured in gateway order', async () => {
+  it('AUTO chooses YOCO first when Yoco is configured and amount is valid', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_auto_yoco',
+        redirectUrl: 'https://c.yoco.com/checkout/auto123',
+        processingMode: 'test',
+      }),
+    });
     prisma.merchant.findUnique.mockResolvedValue({
       ...merchantBase,
-      payfastMerchantId: 'pf-mid',
-      payfastMerchantKey: 'pf-key',
       ozowSiteCode: 'SC-1',
       ozowPrivateKey: 'oz-private',
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
       gatewayOrder: ['OZOW', 'PAYFAST'],
     });
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
-      gateway: 'OZOW',
-      reference: 'INV-AUTO-OZOW',
+      gateway: 'YOCO',
+      reference: 'INV-AUTO-YOCO',
     });
 
     const result = await service.createPayment('m-1', {
       amountCents: 1000,
-      reference: 'INV-AUTO-OZOW',
+      reference: 'INV-AUTO-YOCO',
     });
 
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          gateway: 'OZOW',
+          gateway: 'YOCO',
         }),
       }),
     );
-    expect(result.gateway).toBe('OZOW');
+    expect(result.gateway).toBe('YOCO');
   });
 
   it('creates a Yoco payment with merchant-scoped Yoco keys when gateway is explicit', async () => {
@@ -293,35 +302,36 @@ describe('PaymentsService', () => {
     expect(result.gatewayRef).toBe('checkout_123');
   });
 
-  it('AUTO falls back to PAYFAST when OZOW is not configured', async () => {
+  it('AUTO falls back to Ozow when Yoco amount is below minimum', async () => {
     prisma.merchant.findUnique.mockResolvedValue({
       ...merchantBase,
-      payfastMerchantId: 'pf-mid',
-      payfastMerchantKey: 'pf-key',
-      ozowSiteCode: null,
-      ozowPrivateKey: null,
-      gatewayOrder: ['OZOW', 'PAYFAST'],
+      ozowSiteCode: 'SC-1',
+      ozowPrivateKey: 'oz-private',
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
+      gatewayOrder: ['YOCO', 'OZOW'],
     });
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
-      gateway: 'PAYFAST',
-      reference: 'INV-AUTO-PAYFAST',
+      gateway: 'OZOW',
+      reference: 'INV-AUTO-OZOW-FALLBACK',
     });
 
     const result = await service.createPayment('m-1', {
-      amountCents: 1000,
-      reference: 'INV-AUTO-PAYFAST',
+      amountCents: 150,
+      reference: 'INV-AUTO-OZOW-FALLBACK',
       gateway: 'AUTO',
     });
 
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          gateway: 'PAYFAST',
+          gateway: 'OZOW',
         }),
       }),
     );
-    expect(result.gateway).toBe('PAYFAST');
+    expect(result.gateway).toBe('OZOW');
   });
 
   it('reconciles Yoco webhook-derived success state to PAID', async () => {
@@ -558,7 +568,15 @@ describe('PaymentsService', () => {
     expect(redirect.pathname).toBe('/eng/process');
   });
 
-  it('failover creates next attempt and returns a new redirectUrl', async () => {
+  it('failover creates the next Yoco attempt for AUTO-routed payments', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_failover_123',
+        redirectUrl: 'https://c.yoco.com/checkout/failover123',
+        processingMode: 'test',
+      }),
+    });
     prisma.payment.findFirst.mockResolvedValue({
       id: 'p-1',
       merchantId: 'm-1',
@@ -570,14 +588,19 @@ describe('PaymentsService', () => {
       checkoutToken: 'tok-failover',
       customerEmail: 'buyer@example.com',
       description: 'Failover order',
+      rawGateway: {
+        routing: {
+          requestedGateway: 'AUTO',
+        },
+      },
       merchant: {
         ...merchantBase,
-        payfastMerchantId: 'pf-mid',
-        payfastMerchantKey: 'pf-key',
-        payfastPassphrase: 'pf-pass',
         ozowSiteCode: 'SC-1',
         ozowPrivateKey: 'oz-private',
-        gatewayOrder: ['OZOW', 'PAYFAST'],
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+        gatewayOrder: ['YOCO', 'OZOW'],
       },
       attempts: [{ gateway: 'OZOW' }],
     });
@@ -590,10 +613,8 @@ describe('PaymentsService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           paymentId: 'p-1',
-          gateway: 'PAYFAST',
-          redirectUrl: expect.stringMatching(
-            /^https:\/\/(?:sandbox\.)?payfast\.co\.za\/eng\/process\?/,
-          ),
+          gateway: 'YOCO',
+          redirectUrl: 'https://c.yoco.com/checkout/failover123',
         }),
       }),
     );
@@ -601,16 +622,47 @@ describe('PaymentsService', () => {
       expect.objectContaining({
         where: { id: 'p-1' },
         data: expect.objectContaining({
-          gateway: 'PAYFAST',
+          gateway: 'YOCO',
           status: 'PENDING',
         }),
       }),
     );
     expect(result.attemptId).toBe('att-next');
-    expect(result.redirectUrl).toMatch(
-      /^https:\/\/(?:sandbox\.)?payfast\.co\.za\/eng\/process\?/,
+    expect(result.redirectUrl).toBe('https://c.yoco.com/checkout/failover123');
+    expect(result.gateway).toBe('YOCO');
+  });
+
+  it('does not auto-failover when the payment was explicitly pinned to a gateway', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      id: 'p-locked',
+      merchantId: 'm-1',
+      reference: 'INV-LOCKED',
+      amountCents: 2500,
+      currency: 'ZAR',
+      status: 'CREATED',
+      gateway: 'YOCO',
+      checkoutToken: 'tok-locked',
+      customerEmail: 'buyer@example.com',
+      description: 'Locked order',
+      rawGateway: {
+        routing: {
+          requestedGateway: 'YOCO',
+        },
+      },
+      merchant: {
+        ...merchantBase,
+        ozowSiteCode: 'SC-1',
+        ozowPrivateKey: 'oz-private',
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+      },
+      attempts: [{ gateway: 'YOCO' }],
+    });
+
+    await expect(service.failoverPayment('m-1', 'INV-LOCKED')).rejects.toThrow(
+      'Automatic failover is disabled because this payment is locked to Yoco',
     );
-    expect(result.redirectUrl).not.toContain('https://pay.ozow.com?');
   });
 
   it('maps public signup payload into an Ozow payment with defaults', async () => {

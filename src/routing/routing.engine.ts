@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { GatewayProvider, Prisma } from '@prisma/client';
 import { resolveOzowConfig } from '../gateways/ozow.config';
+import {
+  assertYocoConfigConsistency,
+  resolveYocoConfig,
+} from '../gateways/yoco.config';
 
 export type RoutingMode = 'STRICT_PRIORITY' | 'FAILOVER_PRIORITY';
 
@@ -10,27 +14,39 @@ export type RoutingCandidate = {
   reason: string[];
 };
 
+export type GatewayReadiness = {
+  gateway: GatewayProvider;
+  ready: boolean;
+  issues: string[];
+  mode: 'test' | 'live' | null;
+};
+
 export type RoutingDecision = {
   mode: RoutingMode;
   selectedGateway: GatewayProvider;
   rankedGateways: RoutingCandidate[];
+  readiness: GatewayReadiness[];
 };
 
 type MerchantGatewayConfig = {
   gatewayOrder?: Prisma.JsonValue | null;
   payfastMerchantId?: string | null;
   payfastMerchantKey?: string | null;
+  payfastIsSandbox?: boolean | null;
   ozowSiteCode?: string | null;
   ozowPrivateKey?: string | null;
   yocoPublicKey?: string | null;
   yocoSecretKey?: string | null;
+  ozowApiKey?: string | null;
+  ozowIsTest?: boolean | null;
+  yocoTestMode?: boolean | null;
 };
 
 @Injectable()
 export class RoutingEngine {
-  private readonly defaultOrder: GatewayProvider[] = [
+  private readonly supportedRailOrder: GatewayProvider[] = [
+    GatewayProvider.YOCO,
     GatewayProvider.OZOW,
-    GatewayProvider.PAYFAST,
   ];
 
   decide(args: {
@@ -38,21 +54,32 @@ export class RoutingEngine {
     merchant: MerchantGatewayConfig;
     excludedGateways?: GatewayProvider[];
     mode: RoutingMode;
+    amountCents?: number | null;
+    currency?: string | null;
   }): RoutingDecision {
-    if (
-      args.requestedGateway &&
-      args.requestedGateway !== 'AUTO'
-    ) {
+    const readiness = this.getGatewayReadiness(args);
+
+    if (args.requestedGateway && args.requestedGateway !== 'AUTO') {
       const excluded = new Set(args.excludedGateways ?? []);
       if (excluded.has(args.requestedGateway)) {
         throw new BadRequestException(
-          `Gateway ${args.requestedGateway} is not available for this merchant`,
+          `Gateway ${args.requestedGateway} is not available for this payment`,
         );
       }
 
-      if (!this.isConfigured(args.requestedGateway, args.merchant)) {
+      const gatewayReadiness =
+        readiness.find((item) => item.gateway === args.requestedGateway) ??
+        this.legacyGatewayReadiness(
+          args.requestedGateway,
+          args.merchant,
+          args.excludedGateways,
+        );
+      if (!gatewayReadiness?.ready) {
+        const issue = gatewayReadiness?.issues[0];
         throw new BadRequestException(
-          `Gateway ${args.requestedGateway} is not available for this merchant`,
+          issue
+            ? `Gateway ${args.requestedGateway} is not available for this payment: ${issue}`
+            : `Gateway ${args.requestedGateway} is not available for this payment`,
         );
       }
 
@@ -66,65 +93,185 @@ export class RoutingEngine {
             reason: ['explicit_gateway_request'],
           },
         ],
+        readiness: [...readiness, gatewayReadiness].filter(
+          (item, index, list) =>
+            list.findIndex((candidate) => candidate.gateway === item.gateway) ===
+            index,
+        ),
       };
     }
 
-    const eligible = this.buildEligibleGateways(args.merchant, args.excludedGateways);
+    const eligible = this.buildEligibleGateways(readiness);
 
     if (!eligible.length) {
-      throw new BadRequestException('No configured gateways available for merchant');
+      throw new BadRequestException(
+        this.buildNoGatewayAvailableMessage(readiness),
+      );
     }
 
     return {
       mode: args.mode,
       selectedGateway: eligible[0].gateway,
       rankedGateways: eligible,
+      readiness,
     };
   }
 
-  private buildEligibleGateways(
-    merchant: MerchantGatewayConfig,
-    excludedGateways?: GatewayProvider[],
-  ): RoutingCandidate[] {
-    const excluded = new Set(excludedGateways ?? []);
-    const parsedOrder = Array.isArray(merchant.gatewayOrder)
-  ? merchant.gatewayOrder.filter(
-      (item): item is GatewayProvider =>
-        typeof item === 'string' &&
-        Object.values(GatewayProvider).includes(item as GatewayProvider),
-    )
-  : [];
+  getGatewayReadiness(args: {
+    merchant: MerchantGatewayConfig;
+    excludedGateways?: GatewayProvider[];
+    mode: RoutingMode;
+    amountCents?: number | null;
+    currency?: string | null;
+  }): GatewayReadiness[] {
+    const excluded = new Set(args.excludedGateways ?? []);
+    const currency =
+      typeof args.currency === 'string' && args.currency.trim()
+        ? args.currency.trim().toUpperCase()
+        : null;
+    const amountCents =
+      typeof args.amountCents === 'number' && Number.isFinite(args.amountCents)
+        ? Math.trunc(args.amountCents)
+        : null;
 
-const order = parsedOrder.length ? parsedOrder : this.defaultOrder;
+    return this.supportedRailOrder.map((gateway) => {
+      const issues: string[] = [];
+      if (excluded.has(gateway)) {
+        issues.push('excluded from the current routing attempt');
+      }
 
-    return order
-      .filter((gateway) => !excluded.has(gateway))
-      .filter((gateway) => this.isConfigured(gateway, merchant))
-      .map((gateway, index) => ({
+      if (gateway === GatewayProvider.OZOW) {
+        const config = resolveOzowConfig({
+          ozowSiteCode: args.merchant.ozowSiteCode ?? null,
+          ozowPrivateKey: args.merchant.ozowPrivateKey ?? null,
+          ozowApiKey: args.merchant.ozowApiKey ?? null,
+          ozowIsTest: args.merchant.ozowIsTest ?? null,
+        });
+
+        if (!config.siteCode || !config.privateKey) {
+          issues.push('merchant Ozow credentials are not configured');
+        }
+
+        return {
+          gateway,
+          ready: issues.length === 0,
+          issues,
+          mode: config.isTest ? 'test' : 'live',
+        };
+      }
+
+      if (gateway === GatewayProvider.YOCO) {
+        try {
+          const config = resolveYocoConfig({
+            yocoPublicKey: args.merchant.yocoPublicKey ?? null,
+            yocoSecretKey: args.merchant.yocoSecretKey ?? null,
+            yocoTestMode: args.merchant.yocoTestMode ?? null,
+          });
+          assertYocoConfigConsistency(config);
+
+          if (!config.publicKey || !config.secretKey) {
+            issues.push('merchant Yoco credentials are not configured');
+          }
+
+          if (currency && currency !== 'ZAR') {
+            issues.push('Yoco currently supports ZAR only');
+          }
+
+          if (amountCents !== null && amountCents < 200) {
+            issues.push('Yoco requires a minimum amount of 200 cents');
+          }
+
+          return {
+            gateway,
+            ready: issues.length === 0,
+            issues,
+            mode: config.testMode ? 'test' : 'live',
+          };
+        } catch (error) {
+          issues.push(
+            error instanceof Error
+              ? error.message
+              : 'merchant Yoco mode configuration is invalid',
+          );
+
+          return {
+            gateway,
+            ready: false,
+            issues,
+            mode: null,
+          };
+        }
+      }
+
+      return {
         gateway,
+        ready: false,
+        issues: ['unsupported gateway'],
+        mode: null,
+      };
+    });
+  }
+
+  private buildEligibleGateways(
+    readiness: GatewayReadiness[],
+  ): RoutingCandidate[] {
+    return readiness
+      .filter((gateway) => gateway.ready)
+      .map((gateway, index) => ({
+        gateway: gateway.gateway,
         priority: index + 1,
-        reason: [`priority=${index + 1}`],
+        reason: [
+          `priority=${index + 1}`,
+          gateway.mode ? `mode=${gateway.mode}` : null,
+        ].filter((value): value is string => Boolean(value)),
       }));
   }
 
-  private isConfigured(
+  private buildNoGatewayAvailableMessage(
+    readiness: GatewayReadiness[],
+  ) {
+    const details = readiness
+      .map((gateway) => {
+        const label = gateway.gateway;
+        const issue = gateway.issues[0] ?? 'not ready';
+        return `${label}: ${issue}`;
+      })
+      .join('; ');
+
+    return details
+      ? `No gateway available for this payment. ${details}`
+      : 'No gateway available for this payment';
+  }
+
+  private legacyGatewayReadiness(
     gateway: GatewayProvider,
     merchant: MerchantGatewayConfig,
-  ): boolean {
+    excludedGateways?: GatewayProvider[],
+  ): GatewayReadiness | null {
+    const excluded = new Set(excludedGateways ?? []);
+    const issues: string[] = [];
+    if (excluded.has(gateway)) {
+      issues.push('excluded from the current routing attempt');
+    }
+
     switch (gateway) {
       case GatewayProvider.PAYFAST:
-        return !!merchant.payfastMerchantId && !!merchant.payfastMerchantKey;
-      case GatewayProvider.OZOW: {
-        const config = resolveOzowConfig({
-          ozowSiteCode: merchant.ozowSiteCode ?? null,
-          ozowPrivateKey: merchant.ozowPrivateKey ?? null,
-        });
-        return Boolean(config.siteCode && config.privateKey);
-      }
-      case GatewayProvider.YOCO:
-        return !!merchant.yocoPublicKey && !!merchant.yocoSecretKey;
+        if (!merchant.payfastMerchantId || !merchant.payfastMerchantKey) {
+          issues.push('merchant PayFast credentials are not configured');
+        }
+        return {
+          gateway,
+          ready: issues.length === 0,
+          issues,
+          mode:
+            typeof merchant.payfastIsSandbox === 'boolean'
+              ? merchant.payfastIsSandbox
+                ? 'test'
+                : 'live'
+              : null,
+        };
       default:
-        return false;
+        return null;
     }
   }
 }

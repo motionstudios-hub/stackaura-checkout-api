@@ -93,6 +93,7 @@ type PublicOzowReturnUrls = {
 
 type RequestedGateway = GatewayProvider | 'AUTO' | null;
 
+type CheckoutSelectableGateway = 'AUTO' | 'YOCO' | 'OZOW';
 
 type MerchantGatewayConfig = {
   id: string;
@@ -144,6 +145,26 @@ type IntentAttemptRecord = {
   status: string;
   createdAt: Date;
   updatedAt: Date;
+};
+
+type CheckoutRequestContext = {
+  itemName?: string;
+  returnUrl?: string;
+  cancelUrl?: string;
+  errorUrl?: string;
+  notifyUrl?: string;
+  bankReference?: string;
+};
+
+type HostedCheckoutGatewayOption = {
+  value: CheckoutSelectableGateway;
+  label: string;
+  description: string;
+  detail: string;
+  available: boolean;
+  selected: boolean;
+  recommended: boolean;
+  locked: boolean;
 };
 
 @Injectable()
@@ -291,6 +312,176 @@ export class PaymentsService {
       ...(existingRecord ?? {}),
       ...patch,
     } as Prisma.InputJsonObject;
+  }
+
+  private trimToNull(value: unknown) {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+
+  private parseStoredGatewayProvider(value: unknown): GatewayProvider | null {
+    const raw = this.trimToNull(value)?.toUpperCase();
+    if (!raw) {
+      return null;
+    }
+
+    return Object.values(GatewayProvider).includes(raw as GatewayProvider)
+      ? (raw as GatewayProvider)
+      : null;
+  }
+
+  private parseStoredRequestedGateway(value: unknown): RequestedGateway {
+    const raw = this.trimToNull(value)?.toUpperCase();
+    if (!raw) {
+      return null;
+    }
+
+    if (raw === 'AUTO') {
+      return 'AUTO';
+    }
+
+    return Object.values(GatewayProvider).includes(raw as GatewayProvider)
+      ? (raw as GatewayProvider)
+      : null;
+  }
+
+  private parseCheckoutSelectableGateway(
+    value: string | null | undefined,
+  ): CheckoutSelectableGateway | null {
+    const requested = this.parseRequestedGateway(value ?? undefined);
+    if (!requested) {
+      return null;
+    }
+
+    if (
+      requested !== 'AUTO' &&
+      requested !== GatewayProvider.YOCO &&
+      requested !== GatewayProvider.OZOW
+    ) {
+      throw new BadRequestException(
+        'gateway must be one of AUTO, YOCO, OZOW',
+      );
+    }
+
+    return requested;
+  }
+
+  private coerceCheckoutSelectableGateway(
+    value: RequestedGateway,
+  ): CheckoutSelectableGateway {
+    if (
+      value === GatewayProvider.YOCO ||
+      value === GatewayProvider.OZOW ||
+      value === 'AUTO'
+    ) {
+      return value;
+    }
+
+    return 'AUTO';
+  }
+
+  private gatewayDisplayName(
+    gateway: CheckoutSelectableGateway | GatewayProvider | null,
+  ) {
+    if (gateway === 'AUTO') {
+      return 'Auto';
+    }
+
+    if (gateway === GatewayProvider.YOCO) {
+      return 'Yoco';
+    }
+
+    if (gateway === GatewayProvider.OZOW) {
+      return 'Ozow';
+    }
+
+    if (gateway === GatewayProvider.PAYFAST) {
+      return 'PayFast';
+    }
+
+    return 'Stackaura';
+  }
+
+  private extractStoredRoutingState(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
+    const root = this.asRecord(rawGateway);
+    const routing = this.asRecord(root?.routing);
+    const requestedGateway =
+      this.parseStoredRequestedGateway(routing?.requestedGateway) ?? 'AUTO';
+    const selectedGateway = this.parseStoredGatewayProvider(
+      routing?.selectedGateway,
+    );
+
+    return {
+      requestedGateway,
+      selectedGateway,
+      explicitSelection:
+        requestedGateway !== null && requestedGateway !== 'AUTO',
+    };
+  }
+
+  private buildRoutingSnapshot(args: {
+    requestedGateway: RequestedGateway;
+    selectedGateway: GatewayProvider;
+    mode: string;
+    rankedGateways: Array<{
+      gateway: GatewayProvider;
+      priority: number;
+      reason: string[];
+    }>;
+  }): Prisma.InputJsonObject {
+    return {
+      routing: {
+        requestedGateway: args.requestedGateway ?? 'AUTO',
+        explicitSelection:
+          args.requestedGateway !== null && args.requestedGateway !== 'AUTO',
+        selectedGateway: args.selectedGateway,
+        mode: args.mode,
+        rankedGateways: args.rankedGateways.map((candidate) => ({
+          gateway: candidate.gateway,
+          priority: candidate.priority,
+          reason: candidate.reason,
+        })),
+      },
+    } as Prisma.InputJsonObject;
+  }
+
+  private buildCheckoutRequestSnapshot(
+    args: CheckoutRequestContext,
+  ): Prisma.InputJsonObject {
+    const checkout = Object.entries({
+      itemName: this.trimToNull(args.itemName),
+      returnUrl: this.trimToNull(args.returnUrl),
+      cancelUrl: this.trimToNull(args.cancelUrl),
+      errorUrl: this.trimToNull(args.errorUrl),
+      notifyUrl: this.trimToNull(args.notifyUrl),
+      bankReference: this.trimToNull(args.bankReference),
+    }).reduce<Record<string, string>>((acc, [key, value]) => {
+      if (value) {
+        acc[key] = value;
+      }
+      return acc;
+    }, {});
+
+    return Object.keys(checkout).length
+      ? ({ checkout } as Prisma.InputJsonObject)
+      : ({} as Prisma.InputJsonObject);
+  }
+
+  private extractCheckoutRequestContext(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ): CheckoutRequestContext {
+    const root = this.asRecord(rawGateway);
+    const checkout = this.asRecord(root?.checkout);
+
+    return {
+      itemName: this.trimToNull(checkout?.itemName) ?? undefined,
+      returnUrl: this.trimToNull(checkout?.returnUrl) ?? undefined,
+      cancelUrl: this.trimToNull(checkout?.cancelUrl) ?? undefined,
+      errorUrl: this.trimToNull(checkout?.errorUrl) ?? undefined,
+      notifyUrl: this.trimToNull(checkout?.notifyUrl) ?? undefined,
+      bankReference: this.trimToNull(checkout?.bankReference) ?? undefined,
+    };
   }
 
   private extractRedirectState(
@@ -765,11 +956,15 @@ export class PaymentsService {
   private resolveGatewayForCreate(
     requestedGateway: RequestedGateway,
     merchant: MerchantGatewayConfig,
+    amountCents: number,
+    currency: string,
   ) {
     return this.routingEngine.decide({
       requestedGateway,
       merchant,
       mode: 'STRICT_PRIORITY',
+      amountCents,
+      currency,
     });
   }
 
@@ -777,6 +972,8 @@ export class PaymentsService {
     paymentGateway: GatewayProvider | null;
     attempts: Array<{ gateway: GatewayProvider }>;
     merchant: MerchantGatewayConfig;
+    amountCents: number;
+    currency: string;
   }) {
     const attempted = new Set<GatewayProvider>();
     for (const attempt of args.attempts) {
@@ -791,6 +988,8 @@ export class PaymentsService {
       merchant: args.merchant,
       excludedGateways: Array.from(attempted),
       mode: 'FAILOVER_PRIORITY',
+      amountCents: args.amountCents,
+      currency: args.currency,
     });
 
     return decision.selectedGateway;
@@ -1096,17 +1295,20 @@ export class PaymentsService {
       }
     }
 
-    const merchant = await this.getMerchantGatewayConfig(merchantId);
-
-    const requestedGateway = this.parseRequestedGateway(data?.gateway);
-    const routingDecision = this.resolveGatewayForCreate(requestedGateway, merchant);
-    const gateway = routingDecision.selectedGateway;
-
     const amountCents = this.parsePositiveInt(data?.amountCents, 'amountCents');
     const currency =
       typeof data?.currency === 'string' && data.currency.trim()
         ? data.currency.trim().toUpperCase()
         : 'ZAR';
+    const merchant = await this.getMerchantGatewayConfig(merchantId);
+    const requestedGateway = this.parseRequestedGateway(data?.gateway);
+    const routingDecision = this.resolveGatewayForCreate(
+      requestedGateway,
+      merchant,
+      amountCents,
+      currency,
+    );
+    const gateway = routingDecision.selectedGateway;
 
     const intent = await this.prisma.paymentIntent.create({
       data: {
@@ -1157,6 +1359,12 @@ export class PaymentsService {
         rawGateway: {
           ...this.gatewayRequestSnapshot(gateway, gatewaySession),
           externalReference,
+          ...this.buildRoutingSnapshot({
+            requestedGateway,
+            selectedGateway: gateway,
+            mode: routingDecision.mode,
+            rankedGateways: routingDecision.rankedGateways,
+          }),
         },
       },
       select: {
@@ -1295,13 +1503,8 @@ export class PaymentsService {
       }
     }
 
-    const merchant = await this.getMerchantGatewayConfig(merchantId);
-
-    const requestedGateway = this.parseRequestedGateway(data?.gateway);
-    const routingDecision = this.resolveGatewayForCreate(requestedGateway, merchant);
-    const gateway = routingDecision.selectedGateway;
-
     const amountCents = this.parsePositiveInt(data?.amountCents, 'amountCents');
+    const merchant = await this.getMerchantGatewayConfig(merchantId);
     const { platformFeeCents, merchantNetCents } = this.computeFeeAndNet({
       amountCents,
       platformFeeBps: merchant.platformFeeBps,
@@ -1320,6 +1523,14 @@ export class PaymentsService {
       typeof data?.currency === 'string' && data.currency.trim()
         ? data.currency.trim().toUpperCase()
         : 'ZAR';
+    const requestedGateway = this.parseRequestedGateway(data?.gateway);
+    const routingDecision = this.resolveGatewayForCreate(
+      requestedGateway,
+      merchant,
+      amountCents,
+      currency,
+    );
+    const gateway = routingDecision.selectedGateway;
     const checkoutToken = this.randomToken();
     const expiresAt = new Date(Date.now() + expiresInMinutes * 60 * 1000);
 
@@ -1383,7 +1594,23 @@ export class PaymentsService {
         where: { id: payment.id },
         data: {
           gatewayRef: externalReference,
-          rawGateway: this.gatewayRequestSnapshot(gateway, gatewaySession),
+          rawGateway: {
+            ...this.gatewayRequestSnapshot(gateway, gatewaySession),
+            ...this.buildRoutingSnapshot({
+              requestedGateway,
+              selectedGateway: gateway,
+              mode: routingDecision.mode,
+              rankedGateways: routingDecision.rankedGateways,
+            }),
+            ...this.buildCheckoutRequestSnapshot({
+              itemName: data?.itemName,
+              returnUrl: data?.returnUrl,
+              cancelUrl: data?.cancelUrl,
+              errorUrl: data?.errorUrl,
+              notifyUrl: data?.notifyUrl,
+              bankReference: data?.bankReference,
+            }),
+          },
         },
         select: { id: true },
       }),
@@ -1549,6 +1776,25 @@ export class PaymentsService {
           expiresAt: new Date(Date.now() + 30 * 60 * 1000),
           rawGateway: this.mergeGatewayPayload(existing.rawGateway, {
             ...this.gatewayRequestSnapshot(GatewayProvider.OZOW, gatewaySession),
+            ...this.buildRoutingSnapshot({
+              requestedGateway: GatewayProvider.OZOW,
+              selectedGateway: GatewayProvider.OZOW,
+              mode: 'STRICT_PRIORITY',
+              rankedGateways: [
+                {
+                  gateway: GatewayProvider.OZOW,
+                  priority: 1,
+                  reason: ['explicit_gateway_request'],
+                },
+              ],
+            }),
+            ...this.buildCheckoutRequestSnapshot({
+              returnUrl: OZOW_SUCCESS_URL,
+              cancelUrl: OZOW_CANCEL_URL,
+              errorUrl: OZOW_ERROR_URL,
+              notifyUrl: OZOW_NOTIFY_URL,
+              bankReference: data?.bankReference,
+            }),
           }),
         },
         select: { id: true },
@@ -1565,6 +1811,284 @@ export class PaymentsService {
     ]);
 
     return this.getPaymentResponseById(merchantId, existing.id);
+  }
+
+  private async getHostedCheckoutPaymentRecord(checkoutTokenPlain: string) {
+    const checkoutToken = checkoutTokenPlain?.trim();
+    if (!checkoutToken) {
+      throw new BadRequestException('checkoutToken is required');
+    }
+
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        checkoutToken,
+        expiresAt: { gt: new Date() },
+      },
+      select: {
+        id: true,
+        checkoutToken: true,
+        merchantId: true,
+        reference: true,
+        amountCents: true,
+        currency: true,
+        status: true,
+        description: true,
+        customerEmail: true,
+        expiresAt: true,
+        gateway: true,
+        rawGateway: true,
+        merchant: {
+          select: {
+            name: true,
+          },
+        },
+        attempts: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            redirectUrl: true,
+            gateway: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException('Checkout session not found or expired');
+    }
+
+    return payment;
+  }
+
+  private buildHostedCheckoutGatewayOptions(args: {
+    selectedGateway: CheckoutSelectableGateway;
+    selectionLocked: boolean;
+    readiness: ReturnType<RoutingEngine['getGatewayReadiness']>;
+    autoSelectedGateway: GatewayProvider | null;
+  }): HostedCheckoutGatewayOption[] {
+    const readinessByGateway = new Map(
+      args.readiness.map((item) => [item.gateway, item]),
+    );
+    const lockedToLabel = this.gatewayDisplayName(args.selectedGateway);
+    const autoDetail = args.autoSelectedGateway
+      ? `Stackaura will start with ${this.gatewayDisplayName(args.autoSelectedGateway)}.`
+      : 'No eligible merchant gateway is available for this checkout.';
+
+    return [
+      {
+        value: 'AUTO',
+        label: 'Auto',
+        description: 'Let Stackaura pick the best available rail for this payment.',
+        detail: args.selectionLocked
+          ? `This checkout is locked to ${lockedToLabel}.`
+          : autoDetail,
+        available: !args.selectionLocked && Boolean(args.autoSelectedGateway),
+        selected: args.selectedGateway === 'AUTO',
+        recommended: !args.selectionLocked && Boolean(args.autoSelectedGateway),
+        locked: args.selectionLocked,
+      },
+      {
+        value: GatewayProvider.YOCO,
+        label: 'Yoco',
+        description: 'Fast card checkout with Yoco.',
+        detail: args.selectionLocked && args.selectedGateway !== GatewayProvider.YOCO
+          ? `This checkout is locked to ${lockedToLabel}.`
+          : readinessByGateway.get(GatewayProvider.YOCO)?.issues[0] ??
+            'Available for this checkout.',
+        available:
+          (!args.selectionLocked ||
+            args.selectedGateway === GatewayProvider.YOCO) &&
+          Boolean(readinessByGateway.get(GatewayProvider.YOCO)?.ready),
+        selected: args.selectedGateway === GatewayProvider.YOCO,
+        recommended: args.autoSelectedGateway === GatewayProvider.YOCO,
+        locked:
+          args.selectionLocked && args.selectedGateway !== GatewayProvider.YOCO,
+      },
+      {
+        value: GatewayProvider.OZOW,
+        label: 'Ozow',
+        description: 'Instant EFT checkout with Ozow.',
+        detail: args.selectionLocked && args.selectedGateway !== GatewayProvider.OZOW
+          ? `This checkout is locked to ${lockedToLabel}.`
+          : readinessByGateway.get(GatewayProvider.OZOW)?.issues[0] ??
+            'Available for this checkout.',
+        available:
+          (!args.selectionLocked ||
+            args.selectedGateway === GatewayProvider.OZOW) &&
+          Boolean(readinessByGateway.get(GatewayProvider.OZOW)?.ready),
+        selected: args.selectedGateway === GatewayProvider.OZOW,
+        recommended: args.autoSelectedGateway === GatewayProvider.OZOW,
+        locked:
+          args.selectionLocked && args.selectedGateway !== GatewayProvider.OZOW,
+      },
+    ];
+  }
+
+  async getHostedCheckoutPageContext(checkoutTokenPlain: string) {
+    const payment = await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
+    const merchant = await this.getMerchantGatewayConfig(payment.merchantId);
+    const routingState = this.extractStoredRoutingState(payment.rawGateway);
+    const selectedGateway = this.coerceCheckoutSelectableGateway(
+      routingState.requestedGateway,
+    );
+    const selectionLocked = selectedGateway !== 'AUTO';
+    const readiness = this.routingEngine.getGatewayReadiness({
+      merchant,
+      mode: 'STRICT_PRIORITY',
+      amountCents: payment.amountCents,
+      currency: payment.currency,
+    });
+
+    let autoSelectedGateway: GatewayProvider | null = null;
+    try {
+      autoSelectedGateway = this.routingEngine.decide({
+        requestedGateway: 'AUTO',
+        merchant,
+        mode: 'STRICT_PRIORITY',
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+      }).selectedGateway;
+    } catch {
+      autoSelectedGateway = null;
+    }
+
+    return {
+      checkoutToken: payment.checkoutToken,
+      merchantName: payment.merchant?.name ?? 'Merchant',
+      reference: payment.reference,
+      amountCents: payment.amountCents,
+      currency: payment.currency,
+      status: payment.status,
+      description: payment.description,
+      customerEmail: payment.customerEmail,
+      expiresAt: payment.expiresAt,
+      currentGateway:
+        payment.attempts[0]?.gateway ?? payment.gateway ?? autoSelectedGateway,
+      selectedGateway,
+      selectionLocked,
+      gatewayOptions: this.buildHostedCheckoutGatewayOptions({
+        selectedGateway,
+        selectionLocked,
+        readiness,
+        autoSelectedGateway,
+      }),
+      recommendedGateway: autoSelectedGateway,
+    };
+  }
+
+  async continueHostedCheckout(
+    checkoutTokenPlain: string,
+    gatewayPlain?: string | null,
+  ) {
+    const payment = await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
+    const merchant = await this.getMerchantGatewayConfig(payment.merchantId);
+    const routingState = this.extractStoredRoutingState(payment.rawGateway);
+    const storedSelectableGateway = this.coerceCheckoutSelectableGateway(
+      routingState.requestedGateway,
+    );
+    const requestedGateway =
+      this.parseCheckoutSelectableGateway(gatewayPlain ?? null) ??
+      storedSelectableGateway;
+
+    if (storedSelectableGateway !== 'AUTO' && requestedGateway !== storedSelectableGateway) {
+      throw new BadRequestException(
+        `This checkout is locked to ${this.gatewayDisplayName(storedSelectableGateway)}`,
+      );
+    }
+
+    if (payment.status === PaymentStatus.PAID) {
+      throw new BadRequestException('Payment is already paid');
+    }
+
+    const routingDecision = this.resolveGatewayForCreate(
+      requestedGateway,
+      merchant,
+      payment.amountCents,
+      payment.currency,
+    );
+    const selectedGateway = routingDecision.selectedGateway;
+    const latestAttempt = payment.attempts[0] ?? null;
+    const redirectState = this.extractRedirectState(
+      payment.rawGateway,
+      latestAttempt?.redirectUrl ?? null,
+    );
+
+    if (
+      payment.gateway === selectedGateway &&
+      (redirectState.redirectForm || redirectState.redirectUrl)
+    ) {
+      return {
+        paymentId: payment.id,
+        reference: payment.reference,
+        gateway: selectedGateway,
+        redirectUrl: redirectState.redirectUrl,
+        redirectForm: redirectState.redirectForm,
+        redirectMethod: redirectState.redirectMethod,
+        reused: true,
+      };
+    }
+
+    const checkoutRequest = this.extractCheckoutRequestContext(payment.rawGateway);
+    const gatewaySession = await this.createGatewayRedirect({
+      gateway: selectedGateway,
+      payment: {
+        id: payment.id,
+        reference: payment.reference,
+        amountCents: payment.amountCents,
+        currency: payment.currency,
+        description: payment.description,
+        customerEmail: payment.customerEmail,
+      },
+      merchant,
+      ...checkoutRequest,
+    });
+    const redirectUrl = gatewaySession.redirectUrl;
+    const externalReference = gatewaySession.externalReference ?? null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.paymentAttempt.create({
+        data: {
+          paymentId: payment.id,
+          gateway: selectedGateway,
+          status: 'CREATED',
+          redirectUrl,
+        },
+        select: { id: true },
+      });
+
+      await tx.payment.update({
+        where: { id: payment.id },
+        data: {
+          gateway: selectedGateway,
+          gatewayRef: externalReference,
+          status:
+            payment.status === PaymentStatus.CREATED
+              ? PaymentStatus.CREATED
+              : PaymentStatus.PENDING,
+          rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
+            ...this.gatewayRequestSnapshot(selectedGateway, gatewaySession),
+            ...this.buildRoutingSnapshot({
+              requestedGateway,
+              selectedGateway,
+              mode: routingDecision.mode,
+              rankedGateways: routingDecision.rankedGateways,
+            }),
+            ...this.buildCheckoutRequestSnapshot(checkoutRequest),
+          }),
+        },
+        select: { id: true },
+      });
+    });
+
+    return {
+      paymentId: payment.id,
+      reference: payment.reference,
+      gateway: selectedGateway,
+      redirectUrl,
+      redirectForm: gatewaySession.redirectForm ?? null,
+      redirectMethod: gatewaySession.redirectForm?.method ?? null,
+      reused: false,
+    };
   }
 
   async initiatePublicOzowSignup(
@@ -2165,6 +2689,7 @@ export class PaymentsService {
         checkoutToken: true,
         customerEmail: true,
         description: true,
+        rawGateway: true,
         merchant: {
           select: {
             id: true,
@@ -2203,6 +2728,19 @@ export class PaymentsService {
       throw new BadRequestException('Payment is already paid');
     }
 
+    const routingState = this.extractStoredRoutingState(payment.rawGateway);
+    if (routingState.explicitSelection) {
+      if (args.failSilently) {
+        return null;
+      }
+
+      throw new BadRequestException(
+        `Automatic failover is disabled because this payment is locked to ${this.gatewayDisplayName(
+          this.coerceCheckoutSelectableGateway(routingState.requestedGateway),
+        )}`,
+      );
+    }
+
     const merchantOzowConfig = resolveOzowConfig({
       ozowSiteCode: payment.merchant.ozowSiteCode,
       ozowPrivateKey: payment.merchant.ozowPrivateKey,
@@ -2229,6 +2767,8 @@ export class PaymentsService {
       paymentGateway: payment.gateway ?? null,
       attempts: payment.attempts,
       merchant: merchantConfig,
+      amountCents: payment.amountCents,
+      currency: payment.currency,
     });
 
     if (!nextGateway) {
@@ -2236,10 +2776,12 @@ export class PaymentsService {
       throw new BadRequestException('No failover gateway available');
     }
 
+    const checkoutRequest = this.extractCheckoutRequestContext(payment.rawGateway);
     const gatewaySession = await this.createGatewayRedirect({
       gateway: nextGateway,
       payment,
       merchant: merchantConfig,
+      ...checkoutRequest,
     });
     const redirectUrl = gatewaySession.redirectUrl;
     const externalReference = gatewaySession.externalReference ?? null;
@@ -2261,7 +2803,22 @@ export class PaymentsService {
           gateway: nextGateway,
           gatewayRef: externalReference,
           status: PaymentStatus.PENDING,
-          rawGateway: this.gatewayRequestSnapshot(nextGateway, gatewaySession),
+          rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
+            ...this.gatewayRequestSnapshot(nextGateway, gatewaySession),
+            ...this.buildRoutingSnapshot({
+              requestedGateway: 'AUTO',
+              selectedGateway: nextGateway,
+              mode: 'FAILOVER_PRIORITY',
+              rankedGateways: [
+                {
+                  gateway: nextGateway,
+                  priority: 1,
+                  reason: ['failover_selected'],
+                },
+              ],
+            }),
+            ...this.buildCheckoutRequestSnapshot(checkoutRequest),
+          }),
         },
         select: { id: true },
       });

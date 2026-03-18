@@ -1,8 +1,10 @@
 import {
+  Body,
   Controller,
   Get,
   NotFoundException,
   Param,
+  Post,
   Query,
   Res,
 } from '@nestjs/common';
@@ -63,126 +65,44 @@ export class CheckoutController {
     @Param('checkoutToken') checkoutToken: string,
     @Res() res: Response,
   ) {
-    const payment = await this.prisma.payment.findFirst({
-      where: {
-        checkoutToken,
-        expiresAt: { gt: new Date() },
-      },
-      select: {
-        id: true,
-        merchantId: true,
-        reference: true,
-        amountCents: true,
-        currency: true,
-        status: true,
-        description: true,
-        customerEmail: true,
-        expiresAt: true,
-        gateway: true,
-        rawGateway: true,
-      },
-    });
-
-    if (!payment) {
-      throw new NotFoundException('Checkout session not found or expired');
-    }
-
-    const merchant = await this.prisma.merchant.findUnique({
-      where: { id: payment.merchantId },
-      select: { name: true },
-    });
-
-    const latestAttempt = await this.prisma.paymentAttempt.findFirst({
-      where: { paymentId: payment.id },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        redirectUrl: true,
-        gateway: true,
-      },
-    });
+    const checkout = await this.paymentsService.getHostedCheckoutPageContext(
+      checkoutToken,
+    );
 
     return res
       .status(200)
       .type('html')
-      .send(
-        this.renderCheckoutPage({
-          merchantName: merchant?.name ?? 'Merchant',
-          reference: payment.reference,
-          amountCents: payment.amountCents,
-          currency: payment.currency,
-          status: payment.status,
-          description: payment.description,
-          customerEmail: payment.customerEmail,
-          expiresAt: payment.expiresAt,
-          gateway: latestAttempt?.gateway ?? payment.gateway ?? null,
-          ...this.resolveRedirectState(
-            payment.rawGateway,
-            latestAttempt?.redirectUrl ?? null,
-          ),
-        }),
-      );
+      .send(this.renderCheckoutPage(checkout));
   }
 
-  private parseRedirectForm(value: unknown): GatewayRedirectForm | null {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) {
-      return null;
-    }
-
-    const record = value as Record<string, unknown>;
-    const action =
-      typeof record.action === 'string' && record.action.trim()
-        ? record.action.trim()
-        : null;
-    const method =
-      typeof record.method === 'string' && record.method.trim().toUpperCase() === 'POST'
-        ? 'POST'
-        : null;
-    const fields =
-      record.fields && typeof record.fields === 'object' && !Array.isArray(record.fields)
-        ? (record.fields as Record<string, unknown>)
-        : null;
-
-    if (!action || !method || !fields) {
-      return null;
-    }
-
-    const normalizedFields: Record<string, string> = {};
-    for (const [key, value] of Object.entries(fields)) {
-      if (typeof value === 'string') {
-        normalizedFields[key] = value;
-      } else if (typeof value === 'number' && Number.isFinite(value)) {
-        normalizedFields[key] = String(value);
-      }
-    }
-
-    return {
-      action,
-      method,
-      fields: normalizedFields,
-    };
-  }
-
-  private resolveRedirectState(rawGateway: unknown, fallbackRedirectUrl: string | null) {
-    const root =
-      rawGateway && typeof rawGateway === 'object' && !Array.isArray(rawGateway)
-        ? (rawGateway as Record<string, unknown>)
-        : null;
-    const request =
-      root?.request && typeof root.request === 'object' && !Array.isArray(root.request)
-        ? (root.request as Record<string, unknown>)
-        : root;
-    const redirectForm = this.parseRedirectForm(
-      request?.redirectForm ?? root?.redirectForm,
+  @Post(':checkoutToken/continue')
+  async continueCheckout(
+    @Param('checkoutToken') checkoutToken: string,
+    @Body('gateway') gateway: string | undefined,
+    @Res() res: Response,
+  ) {
+    const handoff = await this.paymentsService.continueHostedCheckout(
+      checkoutToken,
+      gateway,
     );
-    const redirectUrl =
-      (typeof request?.redirectUrl === 'string' && request.redirectUrl.trim()) ||
-      redirectForm?.action ||
-      fallbackRedirectUrl;
 
-    return {
-      redirectUrl: redirectUrl ?? null,
-      redirectForm,
-    };
+    if (handoff.redirectForm) {
+      return res
+        .status(200)
+        .type('html')
+        .send(
+          this.renderGatewayRedirectPage(
+            handoff.redirectForm,
+            this.formatDisplayToken(handoff.gateway),
+          ),
+        );
+    }
+
+    if (handoff.redirectUrl) {
+      return res.redirect(302, handoff.redirectUrl);
+    }
+
+    throw new NotFoundException('Gateway redirect is not available');
   }
 
   private async tryFailoverAndRedirect(
@@ -324,6 +244,7 @@ export class CheckoutController {
   }
 
   private renderCheckoutPage(args: {
+    checkoutToken: string;
     merchantName: string;
     reference: string;
     amountCents: number;
@@ -332,9 +253,20 @@ export class CheckoutController {
     description: string | null;
     customerEmail: string | null;
     expiresAt: Date;
-    gateway: string | null;
-    redirectUrl: string | null;
-    redirectForm: GatewayRedirectForm | null;
+    currentGateway: string | null;
+    selectedGateway: string;
+    selectionLocked: boolean;
+    recommendedGateway: string | null;
+    gatewayOptions: Array<{
+      value: string;
+      label: string;
+      description: string;
+      detail: string;
+      available: boolean;
+      selected: boolean;
+      recommended: boolean;
+      locked: boolean;
+    }>;
   }) {
     const amount = this.formatMoney(args.amountCents, args.currency);
     const expiresAt = new Date(args.expiresAt).toLocaleString();
@@ -342,14 +274,79 @@ export class CheckoutController {
     const description =
       args.description ?? 'Secure payment powered by Stackaura.';
     const customer = args.customerEmail ?? 'Not provided';
-    const gateway = args.gateway ?? 'STACKAURA';
-    const gatewayLabel = this.formatDisplayToken(gateway);
+    const currentGateway = args.currentGateway ?? args.recommendedGateway ?? 'STACKAURA';
+    const gatewayLabel = this.formatDisplayToken(currentGateway);
+    const selectedGatewayLabel = this.formatDisplayToken(args.selectedGateway);
     const statusLabel = this.formatDisplayToken(args.status);
-    const cta = args.redirectForm
-      ? this.renderRedirectForm(args.redirectForm, gatewayLabel)
-      : args.redirectUrl
-        ? `<a class="cta" href="${this.escapeHtml(args.redirectUrl)}">Continue to ${this.escapeHtml(gatewayLabel)}</a>`
-        : `<div class="muted-box">Gateway redirect is being prepared by Stackaura. Refresh this page in a moment if the payment link does not appear yet.</div>`;
+    const recommendedLabel = args.recommendedGateway
+      ? this.formatDisplayToken(args.recommendedGateway)
+      : null;
+    const selectionLead = args.selectionLocked
+      ? `This checkout is locked to ${selectedGatewayLabel}.`
+      : recommendedLabel
+        ? `Auto routing currently prioritizes ${recommendedLabel}.`
+        : 'Choose the best available rail for this payment.';
+    const ctaLabel =
+      args.selectedGateway === 'AUTO'
+        ? 'Continue with Auto'
+        : `Continue to ${selectedGatewayLabel}`;
+    const selectedOption = args.gatewayOptions.find((option) => option.selected);
+    const submitDisabled = !selectedOption?.available;
+    const submitLabel = submitDisabled ? 'Gateway unavailable' : ctaLabel;
+    const gatewayOptions = args.gatewayOptions
+      .map((option) => {
+        const classes = [
+          'gateway-option',
+          option.selected ? 'is-selected' : '',
+          option.available ? 'is-available' : 'is-disabled',
+          option.recommended ? 'is-recommended' : '',
+          option.locked ? 'is-locked' : '',
+        ]
+          .filter(Boolean)
+          .join(' ');
+        const pills = [
+          option.recommended
+            ? '<span class="option-pill option-pill-recommended">Recommended</span>'
+            : '',
+          option.locked
+            ? '<span class="option-pill option-pill-muted">Locked</span>'
+            : '',
+          !option.available
+            ? '<span class="option-pill option-pill-disabled">Unavailable</span>'
+            : '',
+        ]
+          .filter(Boolean)
+          .join('');
+
+        return `
+          <label class="${classes}">
+            <input
+              type="radio"
+              name="gateway"
+              value="${this.escapeHtml(option.value)}"
+              ${option.selected ? 'checked' : ''}
+              ${option.available ? '' : 'disabled'}
+              data-cta-label="${this.escapeHtml(
+                option.value === 'AUTO'
+                  ? 'Continue with Auto'
+                  : `Continue to ${option.label}`,
+              )}"
+              data-available="${option.available ? 'true' : 'false'}"
+            />
+            <div class="gateway-option-copy">
+              <div class="gateway-option-top">
+                <div class="gateway-option-title-row">
+                  <div class="gateway-option-title">${this.escapeHtml(option.label)}</div>
+                  <div class="gateway-option-pills">${pills}</div>
+                </div>
+                <div class="gateway-option-description">${this.escapeHtml(option.description)}</div>
+              </div>
+              <div class="gateway-option-detail">${this.escapeHtml(option.detail)}</div>
+            </div>
+          </label>
+        `;
+      })
+      .join('');
 
     return `
 <!doctype html>
@@ -645,6 +642,14 @@ export class CheckoutController {
           0 24px 40px rgba(30, 78, 216, 0.28),
           inset 0 1px 0 rgba(255,255,255,0.28);
       }
+      .cta[disabled] {
+        cursor: not-allowed;
+        opacity: 0.58;
+        transform: none;
+        box-shadow:
+          0 16px 26px rgba(43, 69, 120, 0.14),
+          inset 0 1px 0 rgba(255,255,255,0.24);
+      }
       .muted-box {
         border: 1px dashed rgba(93, 120, 167, 0.24);
         border-radius: 20px;
@@ -702,6 +707,110 @@ export class CheckoutController {
       }
       .trust-copy strong {
         color: var(--text);
+      }
+      .gateway-form {
+        display: grid;
+        gap: 16px;
+      }
+      .gateway-grid {
+        display: grid;
+        gap: 12px;
+      }
+      .gateway-option {
+        display: grid;
+        grid-template-columns: 20px minmax(0, 1fr);
+        align-items: flex-start;
+        gap: 14px;
+        padding: 16px 18px;
+        border-radius: 22px;
+        border: 1px solid rgba(93, 120, 167, 0.14);
+        background: rgba(255, 255, 255, 0.58);
+        cursor: pointer;
+        transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+      }
+      .gateway-option:hover {
+        transform: translateY(-1px);
+        border-color: rgba(30, 78, 216, 0.24);
+        box-shadow: 0 18px 30px rgba(43, 69, 120, 0.08);
+      }
+      .gateway-option.is-selected {
+        border-color: rgba(30, 78, 216, 0.36);
+        background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(235,243,255,0.94));
+        box-shadow: 0 20px 34px rgba(30, 78, 216, 0.1);
+      }
+      .gateway-option.is-disabled {
+        cursor: not-allowed;
+        opacity: 0.72;
+      }
+      .gateway-option input {
+        margin-top: 4px;
+        width: 18px;
+        height: 18px;
+        accent-color: var(--accent);
+      }
+      .gateway-option-copy {
+        display: grid;
+        gap: 10px;
+      }
+      .gateway-option-top {
+        display: grid;
+        gap: 6px;
+      }
+      .gateway-option-title-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .gateway-option-title {
+        color: var(--text);
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+      .gateway-option-pills {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .option-pill {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+      .option-pill-recommended {
+        background: rgba(30, 78, 216, 0.1);
+        color: var(--accent-strong);
+      }
+      .option-pill-muted {
+        background: rgba(93, 120, 167, 0.12);
+        color: var(--muted);
+      }
+      .option-pill-disabled {
+        background: rgba(220, 38, 38, 0.1);
+        color: #a61b1b;
+      }
+      .gateway-option-description {
+        color: var(--muted);
+        line-height: 1.55;
+      }
+      .gateway-option-detail {
+        color: var(--subtle);
+        font-size: 13px;
+        line-height: 1.55;
+      }
+      .selection-note {
+        padding: 14px 16px;
+        border-radius: 18px;
+        background: rgba(30, 78, 216, 0.08);
+        border: 1px solid rgba(30, 78, 216, 0.12);
+        color: var(--muted);
+        line-height: 1.6;
       }
       .support-panel {
         display: grid;
@@ -818,8 +927,9 @@ export class CheckoutController {
           </div>
           <div class="description">${this.escapeHtml(description)}</div>
           <div class="pill-row">
-            <div class="badge badge-gateway">Gateway <strong>${this.escapeHtml(gatewayLabel)}</strong></div>
+            <div class="badge badge-gateway">Current rail <strong>${this.escapeHtml(gatewayLabel)}</strong></div>
             <div class="badge badge-status">Status <strong>${this.escapeHtml(statusLabel)}</strong></div>
+            <div class="badge">Selected <strong id="selected-gateway-pill">${this.escapeHtml(selectedGatewayLabel)}</strong></div>
           </div>
 
           <div class="list">
@@ -845,23 +955,29 @@ export class CheckoutController {
         <aside class="card stack">
           <div>
             <div class="eyebrow">Next step</div>
-            <h2 class="aside-title">Continue to ${this.escapeHtml(gatewayLabel)}</h2>
-            <p class="aside-copy">Your payment details are locked in. Continue to the selected gateway to authorize and complete checkout.</p>
+            <h2 class="aside-title" id="next-step-heading">${this.escapeHtml(submitLabel)}</h2>
+            <p class="aside-copy">${this.escapeHtml(selectionLead)}</p>
           </div>
           <div class="countdown">
             <div class="countdown-label">Checkout expires in</div>
             <div class="countdown-value" id="countdown">--:--</div>
             <div class="countdown-sub">Expires at ${this.escapeHtml(expiresAt)}</div>
           </div>
-          ${cta}
+          <form class="gateway-form" method="post" action="/v1/checkout/${this.escapeHtml(args.checkoutToken)}/continue">
+            <div class="gateway-grid">
+              ${gatewayOptions}
+            </div>
+            <div class="selection-note" id="selection-note">${this.escapeHtml(selectedOption?.detail ?? selectionLead)}</div>
+            <button class="cta" id="gateway-submit" type="submit" ${submitDisabled ? 'disabled' : ''}>${this.escapeHtml(submitLabel)}</button>
+          </form>
           <p class="trust-copy">
             By continuing, you’ll be redirected to the selected gateway through <strong>Stackaura’s secure payment infrastructure</strong>.
           </p>
           <div class="support-panel">
             <div class="support-title">Checkout summary</div>
             <div class="support-row">
-              <span>Gateway</span>
-              <strong>${this.escapeHtml(gatewayLabel)}</strong>
+              <span>Recommended</span>
+              <strong>${this.escapeHtml(recommendedLabel ?? gatewayLabel)}</strong>
             </div>
             <div class="support-row">
               <span>Status</span>
@@ -879,6 +995,11 @@ export class CheckoutController {
       (function () {
         const expiresAt = new Date(${JSON.stringify(expiresAtIso)}).getTime();
         const el = document.getElementById('countdown');
+        const submit = document.getElementById('gateway-submit');
+        const heading = document.getElementById('next-step-heading');
+        const note = document.getElementById('selection-note');
+        const pill = document.getElementById('selected-gateway-pill');
+        const gatewayInputs = Array.from(document.querySelectorAll('input[name="gateway"]'));
         if (!el) return;
 
         function render() {
@@ -896,13 +1017,41 @@ export class CheckoutController {
             clearInterval(timer);
           }
         }, 1000);
+
+        function updateSelection() {
+          const selected = gatewayInputs.find((input) => input.checked);
+          if (!selected || !submit) return;
+
+          const ctaLabel = selected.dataset.ctaLabel || 'Continue';
+          const isAvailable = selected.dataset.available === 'true';
+          const container = selected.closest('.gateway-option');
+          const detail = container?.querySelector('.gateway-option-detail')?.textContent || '';
+          const label = container?.querySelector('.gateway-option-title')?.textContent || ctaLabel.replace('Continue to ', '').replace('Continue with ', '');
+
+          submit.textContent = isAvailable ? ctaLabel : 'Gateway unavailable';
+          submit.disabled = !isAvailable;
+          if (heading) {
+            heading.textContent = isAvailable ? ctaLabel : 'Gateway unavailable';
+          }
+          if (note && detail) {
+            note.textContent = detail;
+          }
+          if (pill && label) {
+            pill.textContent = label;
+          }
+        }
+
+        gatewayInputs.forEach((input) => {
+          input.addEventListener('change', updateSelection);
+        });
+        updateSelection();
       })();
     </script>
   </body>
 </html>`;
   }
 
-  private renderRedirectForm(
+  private renderGatewayRedirectPage(
     redirectForm: GatewayRedirectForm,
     gateway: string,
   ) {
@@ -914,6 +1063,66 @@ export class CheckoutController {
       .join('');
 
     return `
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Redirecting to ${this.escapeHtml(gateway)}</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(77, 139, 255, 0.22), transparent 34%),
+          linear-gradient(180deg, #f8fbff 0%, #edf3ff 54%, #dfe9fb 100%);
+        color: #10203b;
+        font-family: "Satoshi", "Avenir Next", "Segoe UI", sans-serif;
+      }
+      .card {
+        width: 100%;
+        max-width: 480px;
+        padding: 28px;
+        border-radius: 28px;
+        border: 1px solid rgba(93, 120, 167, 0.18);
+        background: rgba(255, 255, 255, 0.82);
+        backdrop-filter: blur(18px);
+        box-shadow: 0 28px 80px rgba(43, 69, 120, 0.14);
+        text-align: center;
+      }
+      .title {
+        margin: 0;
+        font-size: 28px;
+        letter-spacing: -0.04em;
+      }
+      .copy {
+        margin: 12px 0 0;
+        color: #5b6a87;
+        line-height: 1.6;
+      }
+      .cta {
+        margin-top: 18px;
+        display: inline-flex;
+        justify-content: center;
+        align-items: center;
+        width: 100%;
+        min-height: 56px;
+        border: none;
+        border-radius: 18px;
+        background: linear-gradient(135deg, #1e4ed8 0%, #143fb9 100%);
+        color: #fff;
+        font-weight: 700;
+        cursor: pointer;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1 class="title">Redirecting to ${this.escapeHtml(gateway)}</h1>
+      <p class="copy">Stackaura is preparing your secure handoff.</p>
 <form id="gateway-form" method="${this.escapeHtml(redirectForm.method)}" action="${this.escapeHtml(redirectForm.action)}">
   ${hiddenInputs}
   <button class="cta" type="submit">Continue to ${this.escapeHtml(gateway)}</button>
@@ -925,7 +1134,10 @@ export class CheckoutController {
       form.submit();
     }
   })();
-</script>`;
+</script>
+    </div>
+  </body>
+</html>`;
   }
 
   private renderStatusPage(args: {
