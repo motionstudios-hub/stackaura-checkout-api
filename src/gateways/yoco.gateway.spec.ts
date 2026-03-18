@@ -63,6 +63,61 @@ describe('YocoGateway', () => {
     );
   });
 
+  it('rejects sub-R2.00 Yoco payments before calling the provider', async () => {
+    await expect(
+      gateway.createPayment({
+        merchantId: 'm-1',
+        paymentId: 'p-low',
+        reference: 'INV-YOCO-LOW',
+        amountCents: 100,
+        currency: 'ZAR',
+        config: {
+          yocoPublicKey: 'pk_test_public',
+          yocoSecretKey: 'sk_test_secret',
+          yocoTestMode: true,
+        },
+      }),
+    ).rejects.toThrow('Yoco requires amountCents to be at least 200');
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the sanitized Yoco provider validation error body', async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      headers: new Headers({
+        'content-type': 'application/json',
+        'x-request-id': 'req_yoco_1',
+      }),
+      json: async () => ({
+        description: 'You cannot process a payment for less than R2.00.',
+      }),
+    });
+
+    await expect(
+      gateway.createPayment({
+        merchantId: 'm-1',
+        paymentId: 'p-1',
+        reference: 'INV-YOCO-1',
+        amountCents: 250,
+        currency: 'ZAR',
+        config: {
+          yocoPublicKey: 'pk_test_public',
+          yocoSecretKey: 'sk_test_secret',
+          yocoTestMode: true,
+        },
+        metadata: {
+          returnUrl: 'https://stackaura.co.za/payments/success',
+          cancelUrl: 'https://stackaura.co.za/payments/cancel',
+          errorUrl: 'https://stackaura.co.za/payments/error',
+        },
+      }),
+    ).rejects.toThrow(
+      'Yoco checkout creation failed: You cannot process a payment for less than R2.00.',
+    );
+  });
+
   it('registers a Yoco webhook subscription and returns the one-time secret', async () => {
     fetchMock.mockResolvedValue({
       ok: true,

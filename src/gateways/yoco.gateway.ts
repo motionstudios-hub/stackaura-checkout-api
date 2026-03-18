@@ -1,4 +1,9 @@
-import { Injectable, NotImplementedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  NotImplementedException,
+} from '@nestjs/common';
 import {
   GatewayAdapter,
   GatewayCreatePaymentInput,
@@ -36,6 +41,8 @@ export type YocoCheckoutStatus = {
 
 @Injectable()
 export class YocoGateway implements GatewayAdapter {
+  private readonly logger = new Logger(YocoGateway.name);
+
   async createPayment(
     input: GatewayCreatePaymentInput,
   ): Promise<GatewayCreatePaymentResult> {
@@ -51,35 +58,93 @@ export class YocoGateway implements GatewayAdapter {
       throw new Error('Yoco currently supports ZAR only');
     }
 
-    const response = await fetch(config.checkoutApiUrl, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.secretKey}`,
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-        'Idempotency-Key': input.paymentId,
+    if (!Number.isInteger(input.amountCents) || input.amountCents < 200) {
+      throw new BadRequestException(
+        'Yoco requires amountCents to be at least 200 (R2.00)',
+      );
+    }
+
+    const requestPayload = {
+      amount: input.amountCents,
+      currency,
+      successUrl:
+        input.metadata?.returnUrl?.trim() ?? this.defaultRedirectUrl('success'),
+      cancelUrl:
+        input.metadata?.cancelUrl?.trim() ?? this.defaultRedirectUrl('cancel'),
+      failureUrl:
+        input.metadata?.errorUrl?.trim() ?? this.defaultRedirectUrl('error'),
+      clientReferenceId: input.paymentId,
+      externalId: input.reference,
+      metadata: {
+        merchantId: input.merchantId,
+        paymentId: input.paymentId,
+        reference: input.reference,
       },
-      body: JSON.stringify({
-        amount: input.amountCents,
-        currency,
-        successUrl:
-          input.metadata?.returnUrl?.trim() ?? this.defaultRedirectUrl('success'),
-        cancelUrl:
-          input.metadata?.cancelUrl?.trim() ?? this.defaultRedirectUrl('cancel'),
-        failureUrl:
-          input.metadata?.errorUrl?.trim() ?? this.defaultRedirectUrl('error'),
-        clientReferenceId: input.paymentId,
-        externalId: input.reference,
-        metadata: {
-          merchantId: input.merchantId,
-          paymentId: input.paymentId,
-          reference: input.reference,
-        },
+    };
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'yoco.checkout.create.request',
+        endpoint: config.checkoutApiUrl,
+        testMode: config.testMode,
+        merchantId: input.merchantId,
+        reference: input.reference,
+        requestPayload: this.sanitizeValue(requestPayload),
       }),
-    });
+    );
+
+    let response: Response;
+    try {
+      response = await fetch(config.checkoutApiUrl, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${config.secretKey}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+          'Idempotency-Key': input.paymentId,
+        },
+        body: JSON.stringify(requestPayload),
+      });
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'yoco.checkout.create.request_error',
+          endpoint: config.checkoutApiUrl,
+          testMode: config.testMode,
+          merchantId: input.merchantId,
+          reference: input.reference,
+          requestPayload: this.sanitizeValue(requestPayload),
+          errorMessage:
+            error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack ?? null : null,
+        }),
+      );
+      throw error;
+    }
 
     if (!response.ok) {
-      throw new Error(`Yoco checkout creation failed with status ${response.status}`);
+      const responseBody = await this.readJsonOrTextPayload(response);
+      const responseHeaders = this.pickResponseHeaders(response.headers);
+      this.logger.error(
+        JSON.stringify({
+          event: 'yoco.checkout.create.failed',
+          endpoint: config.checkoutApiUrl,
+          testMode: config.testMode,
+          merchantId: input.merchantId,
+          reference: input.reference,
+          statusCode: response.status,
+          requestPayload: this.sanitizeValue(requestPayload),
+          responseHeaders,
+          responseBody: this.sanitizeValue(responseBody),
+        }),
+      );
+
+      const providerMessage = this.extractProviderErrorMessage(responseBody);
+      throw new BadRequestException(
+        providerMessage
+          ? `Yoco checkout creation failed: ${providerMessage}`
+          : `Yoco checkout creation failed with status ${response.status}`,
+      );
     }
 
     const payload = await this.readJsonRecord(response);
@@ -368,6 +433,92 @@ export class YocoGateway implements GatewayAdapter {
     }
 
     return null;
+  }
+
+  private async readJsonOrTextPayload(response: Response) {
+    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    if (contentType.includes('application/json')) {
+      try {
+        return (await response.json()) as unknown;
+      } catch {
+        return null;
+      }
+    }
+
+    try {
+      const text = await response.text();
+      const normalized = text.trim();
+      return normalized || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private extractProviderErrorMessage(payload: unknown) {
+    if (typeof payload === 'string' && payload.trim()) {
+      return payload.trim();
+    }
+
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return null;
+    }
+
+    const record = payload as Record<string, unknown>;
+    for (const key of ['description', 'message', 'error']) {
+      const value = record[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+
+    return null;
+  }
+
+  private pickResponseHeaders(headers: Headers) {
+    const keys = [
+      'content-type',
+      'idempotency-key',
+      'x-correlation-id',
+      'x-request-id',
+    ];
+
+    return Object.fromEntries(
+      keys
+        .map((key) => [key, headers.get(key)] as const)
+        .filter(([, value]) => typeof value === 'string' && value.trim().length > 0),
+    );
+  }
+
+  private sanitizeValue(value: unknown): unknown {
+    if (value === null || value === undefined) {
+      return value ?? null;
+    }
+
+    if (typeof value === 'string') {
+      return value.length > 500 ? `${value.slice(0, 500)}...` : value;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      return value;
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => this.sanitizeValue(item));
+    }
+
+    if (typeof value !== 'object') {
+      return String(value);
+    }
+
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(record).map(([key, entryValue]) => {
+        if (['publicKey', 'secretKey', 'apiKey', 'privateKey'].includes(key)) {
+          return [key, '<redacted>'];
+        }
+        return [key, this.sanitizeValue(entryValue)];
+      }),
+    );
   }
 
   private async readErrorSnippet(response: Response) {
