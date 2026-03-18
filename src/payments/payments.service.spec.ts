@@ -23,6 +23,8 @@ describe('PaymentsService', () => {
     };
     paymentAttempt: {
       create: jest.Mock;
+      findFirst: jest.Mock;
+      update: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -81,6 +83,8 @@ describe('PaymentsService', () => {
       },
       paymentAttempt: {
         create: jest.fn(),
+        findFirst: jest.fn(),
+        update: jest.fn(),
       },
       $transaction: jest.fn((input: unknown) => {
         if (typeof input === 'function') {
@@ -104,6 +108,11 @@ describe('PaymentsService', () => {
 
     prisma.payment.findUnique.mockResolvedValue(null);
     prisma.paymentAttempt.create.mockResolvedValue({ id: 'att-1' });
+    prisma.paymentAttempt.findFirst.mockResolvedValue({
+      id: 'att-1',
+      status: 'CREATED',
+    });
+    prisma.paymentAttempt.update.mockResolvedValue({ id: 'att-1' });
     prisma.payment.update.mockResolvedValue({ id: 'p-1' });
     prisma.merchant.update.mockResolvedValue({ id: 'm-1' });
 
@@ -313,6 +322,146 @@ describe('PaymentsService', () => {
       }),
     );
     expect(result.gateway).toBe('PAYFAST');
+  });
+
+  it('reconciles Yoco webhook-derived success state to PAID', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_123',
+        status: 'completed',
+        paymentId: 'pay_yoco_123',
+        externalId: 'INV-YOCO-STATUS',
+        clientReferenceId: 'p-1',
+        processingMode: 'test',
+      }),
+    });
+    prisma.payment.findFirst.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'YOCO',
+      status: 'CREATED',
+      reference: 'INV-YOCO-STATUS',
+      gatewayRef: 'checkout_123',
+      merchant: {
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+      },
+      rawGateway: {
+        provider: 'YOCO',
+        externalReference: 'checkout_123',
+        request: {
+          raw: {
+            id: 'checkout_123',
+            status: 'completed',
+            paymentId: 'pay_yoco_123',
+            processingMode: 'test',
+          },
+        },
+        yoco: {
+          checkoutId: 'checkout_123',
+          checkoutStatus: 'completed',
+          paymentId: 'pay_yoco_123',
+          paymentStatus: 'succeeded',
+          eventType: 'payment.succeeded',
+          processingMode: 'test',
+        },
+      },
+    });
+    prisma.payment.update.mockResolvedValue({ id: 'p-1' });
+    jest
+      .spyOn(service, 'recordSuccessfulPaymentLedgerByPaymentId')
+      .mockResolvedValue({ ok: true } as never);
+    jest
+      .spyOn(service, 'fulfillPaidSignupPayment')
+      .mockResolvedValue({ fulfilled: false, reason: 'not_signup_payment' } as never);
+    merchantsService.ensureInitialApiKey.mockResolvedValue({
+      created: false,
+      apiKey: null,
+      apiKeyId: 'key-1',
+      label: 'signup-initial',
+      prefix: 'ck_test',
+      last4: '1234',
+    });
+
+    const result = await service.getYocoPaymentStatus('m-1', 'INV-YOCO-STATUS');
+
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-1' },
+        data: expect.objectContaining({
+          status: 'PAID',
+          gateway: 'YOCO',
+        }),
+      }),
+    );
+    expect(prisma.paymentAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'att-1' },
+        data: { status: 'SUCCEEDED' },
+      }),
+    );
+    expect(result.localStatus).toBe('PAID');
+    expect(result.providerStatus).toBe('succeeded');
+    expect(result.providerEventType).toBe('payment.succeeded');
+    expect(result.checkoutId).toBe('checkout_123');
+  });
+
+  it('marks expired unresolved Yoco checkout as CANCELLED during status reconciliation', async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        id: 'checkout_expired',
+        status: 'started',
+        paymentId: null,
+        externalId: 'INV-YOCO-EXPIRED',
+        clientReferenceId: 'p-1',
+        processingMode: 'test',
+      }),
+    });
+    prisma.payment.findFirst.mockResolvedValue({
+      ...paymentBase,
+      gateway: 'YOCO',
+      status: 'CREATED',
+      reference: 'INV-YOCO-EXPIRED',
+      gatewayRef: 'checkout_expired',
+      expiresAt: new Date(Date.now() - 5 * 60 * 1000),
+      merchant: {
+        yocoPublicKey: 'pk_test_public',
+        yocoSecretKey: 'sk_test_secret',
+        yocoTestMode: true,
+      },
+      rawGateway: {
+        provider: 'YOCO',
+        request: {
+          raw: {
+            id: 'checkout_expired',
+            status: 'started',
+            processingMode: 'test',
+          },
+        },
+      },
+    });
+    prisma.payment.update.mockResolvedValue({ id: 'p-1' });
+
+    const result = await service.getYocoPaymentStatus('m-1', 'INV-YOCO-EXPIRED');
+
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-1' },
+        data: expect.objectContaining({
+          status: 'CANCELLED',
+        }),
+      }),
+    );
+    expect(prisma.paymentAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'att-1' },
+        data: { status: 'CANCELLED' },
+      }),
+    );
+    expect(result.localStatus).toBe('CANCELLED');
+    expect(result.expired).toBe(true);
   });
 
   it('uses configured PayFast merchant credentials in redirect, never internal merchant UUID', async () => {

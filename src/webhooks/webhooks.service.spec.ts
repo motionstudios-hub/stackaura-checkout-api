@@ -15,6 +15,7 @@ describe('WebhooksService', () => {
   let service: WebhooksService;
   let prisma: {
     payment: {
+      findFirst: jest.Mock;
       findUnique: jest.Mock;
       update: jest.Mock;
     };
@@ -153,6 +154,30 @@ describe('WebhooksService', () => {
     return createHmac('sha256', secret).update(toSign).digest('hex');
   };
 
+  const signYocoWebhook = (
+    body: Record<string, unknown>,
+    secret = 'whsec_c2VjcmV0',
+    overrides: { webhookId?: string; timestamp?: string } = {},
+  ) => {
+    const webhookId = overrides.webhookId ?? 'evt_yoco_1';
+    const timestamp =
+      overrides.timestamp ?? String(Math.floor(Date.now() / 1000));
+    const rawBody = JSON.stringify(body);
+    const secretBytes = Buffer.from(secret.split('_')[1], 'base64');
+    const signature = createHmac('sha256', secretBytes)
+      .update(`${webhookId}.${timestamp}.${rawBody}`)
+      .digest('base64');
+
+    return {
+      rawBody,
+      headers: {
+        'webhook-id': webhookId,
+        'webhook-timestamp': timestamp,
+        'webhook-signature': `v1,${signature}`,
+      },
+    };
+  };
+
   const buildPayment = (overrides: Partial<Record<string, unknown>> = {}) => ({
     id: 'pay-1',
     merchantId: 'merch-1',
@@ -164,6 +189,7 @@ describe('WebhooksService', () => {
       ozowSiteCode: 'SC-1',
       ozowPrivateKey: 'merchant-ozow-key',
       ozowApiKey: null,
+      yocoWebhookSecret: 'whsec_c2VjcmV0',
     },
     ...overrides,
   });
@@ -188,6 +214,7 @@ describe('WebhooksService', () => {
 
     prisma = {
       payment: {
+        findFirst: jest.fn(),
         findUnique: jest.fn(),
         update: jest.fn(),
       },
@@ -251,6 +278,7 @@ describe('WebhooksService', () => {
         status: PaymentStatus.PAID,
       }),
     );
+    prisma.payment.findFirst.mockResolvedValue(null);
 
     fetchMock = jest.fn().mockImplementation((url: string) => {
       if (String(url).includes('verify.local')) {
@@ -998,6 +1026,204 @@ describe('WebhooksService', () => {
     expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
       'pay-ozow-paid',
     );
+  });
+
+  it('verifies Yoco webhook signature, updates payment to PAID, and enqueues merchant delivery', async () => {
+    const payment = buildPayment({
+      id: 'pay-yoco-paid',
+      merchantId: 'merch-yoco',
+      reference: 'INV-yoco-paid',
+      status: PaymentStatus.CREATED,
+      gateway: 'YOCO',
+      gatewayRef: 'checkout_123',
+      rawGateway: { provider: 'YOCO' },
+    });
+    prisma.payment.findFirst.mockResolvedValue(payment);
+    prisma.payment.findUnique.mockResolvedValue(payment);
+    prisma.payment.update.mockResolvedValue(
+      buildPayment({
+        id: 'pay-yoco-paid',
+        merchantId: 'merch-yoco',
+        reference: 'INV-yoco-paid',
+        status: PaymentStatus.PAID,
+      }),
+    );
+    prisma.webhookEndpoint.findMany.mockResolvedValue([
+      { id: 'we-yoco-1', url: 'https://merchant.local/yoco' },
+    ]);
+
+    const body = {
+      id: 'evt_yoco_paid',
+      type: 'payment.succeeded',
+      payload: {
+        status: 'succeeded',
+        mode: 'test',
+        metadata: {
+          checkoutId: 'checkout_123',
+          reference: 'INV-yoco-paid',
+          paymentId: 'pay-yoco-paid',
+        },
+      },
+    };
+    const signed = signYocoWebhook(body, 'whsec_c2VjcmV0', {
+      webhookId: 'evt_yoco_paid',
+    });
+
+    await expect(
+      service.handleYocoWebhook(body, {
+        headers: signed.headers,
+        rawBody: signed.rawBody,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.webhookEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          provider: 'YOCO',
+          providerEventId: 'evt_yoco_paid',
+          eventType: 'payment.succeeded',
+        }),
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pay-yoco-paid' },
+        data: expect.objectContaining({
+          status: PaymentStatus.PAID,
+          gateway: 'YOCO',
+          gatewayRef: 'checkout_123',
+          rawGateway: expect.objectContaining({
+            yoco: expect.objectContaining({
+              checkoutId: 'checkout_123',
+              paymentStatus: 'succeeded',
+              eventType: 'payment.succeeded',
+              verified: true,
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(prisma.paymentAttempt.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'att-1' },
+        data: { status: 'SUCCEEDED' },
+      }),
+    );
+    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).toHaveBeenCalledWith(
+      'pay-yoco-paid',
+    );
+    expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
+      'pay-yoco-paid',
+    );
+    expect(prisma.webhookDelivery.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          webhookEndpointId: 'we-yoco-1',
+          event: 'payment_intent.succeeded',
+        }),
+      }),
+    );
+  });
+
+  it('maps Yoco payment.failed webhook to FAILED without recording ledger', async () => {
+    const payment = buildPayment({
+      id: 'pay-yoco-failed',
+      merchantId: 'merch-yoco',
+      reference: 'INV-yoco-failed',
+      status: PaymentStatus.CREATED,
+      gateway: 'YOCO',
+      gatewayRef: 'checkout_failed',
+      rawGateway: { provider: 'YOCO' },
+    });
+    prisma.payment.findFirst.mockResolvedValue(payment);
+    prisma.payment.findUnique.mockResolvedValue(payment);
+    prisma.payment.update.mockResolvedValue(
+      buildPayment({
+        id: 'pay-yoco-failed',
+        merchantId: 'merch-yoco',
+        reference: 'INV-yoco-failed',
+        status: PaymentStatus.FAILED,
+      }),
+    );
+
+    const body = {
+      id: 'evt_yoco_failed',
+      type: 'payment.failed',
+      payload: {
+        status: 'failed',
+        mode: 'test',
+        metadata: {
+          checkoutId: 'checkout_failed',
+          reference: 'INV-yoco-failed',
+          paymentId: 'pay-yoco-failed',
+        },
+        failureReason: 'Card declined',
+      },
+    };
+    const signed = signYocoWebhook(body, 'whsec_c2VjcmV0', {
+      webhookId: 'evt_yoco_failed',
+    });
+
+    await expect(
+      service.handleYocoWebhook(body, {
+        headers: signed.headers,
+        rawBody: signed.rawBody,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'pay-yoco-failed' },
+        data: expect.objectContaining({
+          status: PaymentStatus.FAILED,
+          gateway: 'YOCO',
+        }),
+      }),
+    );
+    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).not.toHaveBeenCalled();
+  });
+
+  it('deduplicates repeated Yoco webhook events by providerEventId', async () => {
+    prisma.payment.findFirst.mockResolvedValue(
+      buildPayment({
+        id: 'pay-yoco-dup',
+        merchantId: 'merch-yoco',
+        reference: 'INV-yoco-dup',
+        status: PaymentStatus.CREATED,
+        gateway: 'YOCO',
+        gatewayRef: 'checkout_dup',
+      }),
+    );
+    prisma.webhookEvent.findUnique.mockResolvedValue({
+      id: 'evt-yoco-dup',
+      processedAt: new Date(),
+    });
+
+    const body = {
+      id: 'evt_yoco_dup',
+      type: 'payment.succeeded',
+      payload: {
+        status: 'succeeded',
+        metadata: {
+          checkoutId: 'checkout_dup',
+          reference: 'INV-yoco-dup',
+          paymentId: 'pay-yoco-dup',
+        },
+      },
+    };
+    const signed = signYocoWebhook(body, 'whsec_c2VjcmV0', {
+      webhookId: 'evt_yoco_dup',
+    });
+
+    await expect(
+      service.handleYocoWebhook(body, {
+        headers: signed.headers,
+        rawBody: signed.rawBody,
+      }),
+    ).resolves.toEqual({ ok: true });
+
+    expect(prisma.payment.update).not.toHaveBeenCalled();
+    expect(prisma.webhookEvent.create).not.toHaveBeenCalled();
   });
 
   it('runs signup fulfillment for paid Ozow signup retries without issuing duplicate deliveries', async () => {

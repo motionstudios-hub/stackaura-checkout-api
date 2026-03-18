@@ -8,6 +8,7 @@ describe('WebhooksController', () => {
   let webhooksService: {
     handlePayfastWebhook: jest.Mock;
     handleOzowWebhook: jest.Mock;
+    handleYocoWebhook: jest.Mock;
     handleDerivPaWebhook: jest.Mock;
   };
 
@@ -15,6 +16,7 @@ describe('WebhooksController', () => {
     webhooksService = {
       handlePayfastWebhook: jest.fn(),
       handleOzowWebhook: jest.fn(),
+      handleYocoWebhook: jest.fn(),
       handleDerivPaWebhook: jest.fn(),
     };
 
@@ -98,5 +100,35 @@ describe('WebhooksController', () => {
     ).resolves.toEqual({ ok: true });
 
     expect(webhooksService.handleOzowWebhook).toHaveBeenCalled();
+  });
+
+  it('returns { ok: true } when Yoco webhook succeeds', async () => {
+    const req = {
+      rawBody: Buffer.from(
+        JSON.stringify({
+          id: 'evt_yoco_1',
+          type: 'payment.succeeded',
+        }),
+      ),
+      get: jest.fn().mockReturnValue('req-yoco'),
+    } as unknown as Parameters<WebhooksController['yoco']>[0];
+
+    await expect(
+      controller.yoco(
+        req,
+        {
+          id: 'evt_yoco_1',
+          type: 'payment.succeeded',
+          payload: { metadata: { checkoutId: 'checkout_123' } },
+        },
+        {
+          'webhook-id': 'evt_yoco_1',
+          'webhook-timestamp': String(Math.floor(Date.now() / 1000)),
+          'webhook-signature': 'v1,signature',
+        },
+      ),
+    ).resolves.toEqual({ ok: true });
+
+    expect(webhooksService.handleYocoWebhook).toHaveBeenCalled();
   });
 });

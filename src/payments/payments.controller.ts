@@ -173,6 +173,19 @@ export class PaymentsController {
 
   @ApiOperation({
     summary:
+      'Fetch the latest Yoco-reconciled status for a merchant-scoped payment reference',
+  })
+  @Get('yoco/:reference/status')
+  async getYocoStatus(
+    @Req() req: any,
+    @Param('reference') reference: string,
+  ) {
+    const merchantId = this.requireMerchantId(req);
+    return this.paymentsService.getYocoPaymentStatus(merchantId, reference);
+  }
+
+  @ApiOperation({
+    summary:
       'Create payment (gateway can be PAYFAST, OZOW, YOCO, or AUTO/omitted for ordered resolution)',
   })
   @ApiBody({

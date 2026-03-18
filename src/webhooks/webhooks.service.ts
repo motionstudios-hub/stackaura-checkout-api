@@ -26,6 +26,8 @@ import {
   OZOW_RESPONSE_HASH_FIELDS,
   resolveOzowConfig,
 } from '../gateways/ozow.config';
+import { YOCO_DEFAULT_WEBHOOK_TOLERANCE_SECONDS } from '../gateways/yoco.config';
+import { mapYocoEventToPaymentStatus } from '../gateways/yoco.lifecycle';
 import { canTransitionPaymentStatus } from '../payments/payment-status.transitions';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -34,6 +36,12 @@ type PayfastPayload = Record<string, string | string[]>;
 type NormalizedPayfastPayload = Record<string, string>;
 type OzowPayload = Record<string, string | string[]>;
 type NormalizedOzowPayload = Record<string, string>;
+type YocoWebhookPayload = Record<string, unknown>;
+type YocoWebhookMeta = {
+  headers?: Record<string, string | string[] | undefined>;
+  rawBody?: string | Buffer;
+  requestId?: string;
+};
 type DerivWebhookMeta = {
   signature?: string;
   timestamp?: string;
@@ -296,6 +304,190 @@ export class WebhooksService {
               },
             }
           : {}),
+      }),
+    });
+
+    const paidPaymentId =
+      mappedStatus === PaymentStatus.PAID &&
+      (outcome.updatedPayment?.status === PaymentStatus.PAID ||
+        payment.status === PaymentStatus.PAID)
+        ? (outcome.updatedPayment?.id ?? payment.id)
+        : null;
+
+    if (paidPaymentId) {
+      void this.paymentsService.recordSuccessfulPaymentLedgerByPaymentId(
+        paidPaymentId,
+      );
+      void this.paymentsService.fulfillPaidSignupPayment(paidPaymentId);
+    }
+
+    if (outcome.updatedPayment && outcome.statusChanged) {
+      const eventName = this.paymentStatusToWebhookEvent(
+        outcome.updatedPayment.status,
+      );
+      if (eventName) {
+        void this.deliverEvent(outcome.updatedPayment.merchantId, eventName, {
+          payment: {
+            id: outcome.updatedPayment.id,
+            reference: outcome.updatedPayment.reference,
+            status: outcome.updatedPayment.status,
+          },
+        });
+      }
+    }
+
+    return { ok: true };
+  }
+
+  async handleYocoWebhook(
+    body: YocoWebhookPayload,
+    meta: YocoWebhookMeta = {},
+  ) {
+    const requestId = this.resolveRequestId(meta.requestId);
+    const root = this.asRecord(body) ?? {};
+    const payload = this.asRecord(root.payload);
+    const metadata = this.asRecord(payload?.metadata);
+    const candidates = [metadata ?? {}, payload ?? {}, root];
+
+    const providerEventId = this.extractStringFromCandidates(candidates, ['id']);
+    const eventType = this.extractStringFromCandidates(candidates, ['type']);
+    const checkoutId = this.extractStringFromCandidates(candidates, [
+      'checkoutId',
+      'checkout_id',
+    ]);
+    const reference = this.extractStringFromCandidates(candidates, [
+      'reference',
+      'externalId',
+      'external_id',
+    ]);
+    const paymentId = this.extractStringFromCandidates(candidates, [
+      'paymentId',
+      'payment_id',
+      'clientReferenceId',
+      'client_reference_id',
+    ]);
+    const rawPaymentStatus = this.extractStringFromCandidates(candidates, [
+      'status',
+    ]);
+    const providerPaymentId = this.extractStringFromCandidates(candidates, [
+      'paymentId',
+      'payment_id',
+    ]);
+    const mode = this.extractStringFromCandidates(candidates, ['mode']);
+
+    this.logStructured('log', 'webhook.received', {
+      requestId,
+      provider: 'YOCO',
+      providerEventId,
+      eventType,
+      checkoutId,
+      reference,
+      paymentId,
+      paymentStatus: rawPaymentStatus,
+      mode,
+    });
+
+    if (!providerEventId) {
+      throw new BadRequestException('Missing Yoco event id');
+    }
+
+    if (!checkoutId && !reference && !paymentId) {
+      throw new BadRequestException(
+        'Missing Yoco checkout or payment reference metadata',
+      );
+    }
+
+    const payment = await this.prisma.payment.findFirst({
+      where: {
+        OR: [
+          ...(paymentId ? [{ id: paymentId }] : []),
+          ...(reference ? [{ reference }] : []),
+          ...(checkoutId ? [{ gatewayRef: checkoutId }] : []),
+        ],
+      },
+      select: {
+        id: true,
+        merchantId: true,
+        reference: true,
+        status: true,
+        gateway: true,
+        gatewayRef: true,
+        rawGateway: true,
+        merchant: {
+          select: {
+            yocoWebhookSecret: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) {
+      this.logStructured('warn', 'payment.not_found', {
+        requestId,
+        provider: 'YOCO',
+        providerEventId,
+        checkoutId,
+        reference,
+        paymentId,
+      });
+      return { ok: true };
+    }
+
+    const webhookSecret =
+      payment.merchant.yocoWebhookSecret?.trim() ||
+      process.env.YOCO_WEBHOOK_SECRET?.trim() ||
+      null;
+    if (!webhookSecret) {
+      throw new UnauthorizedException('Yoco webhook secret is not configured');
+    }
+
+    const rawBody = this.stringifyWebhookBody(body, meta.rawBody);
+    this.assertYocoWebhookSignature(meta.headers, rawBody, webhookSecret);
+
+    const mappedStatus = mapYocoEventToPaymentStatus({
+      eventType,
+      paymentStatus: rawPaymentStatus,
+    });
+    if (!mappedStatus) {
+      throw new BadRequestException('Unsupported Yoco payment status');
+    }
+
+    const payloadForStorage = JSON.parse(
+      JSON.stringify(body ?? {}),
+    ) as Prisma.InputJsonValue;
+    const outcome = await this.persistAndApplyYocoWebhook({
+      requestId,
+      providerEventId,
+      eventType,
+      paymentReference: payment.reference,
+      mappedStatus,
+      checkoutId: checkoutId ?? payment.gatewayRef ?? null,
+      providerPaymentId,
+      signature: this.getHeaderValue(meta.headers, 'webhook-signature'),
+      payload: payloadForStorage,
+      rawGateway: this.mergeJsonObjects(payment.rawGateway, {
+        provider: 'YOCO',
+        yoco: {
+          checkoutId: checkoutId ?? payment.gatewayRef ?? null,
+          checkoutStatus: mappedStatus === PaymentStatus.PAID ? 'completed' : null,
+          paymentId: providerPaymentId,
+          paymentStatus: rawPaymentStatus,
+          eventType,
+          processingMode: mode,
+          metadata: metadata ?? null,
+          paymentMethodDetails: this.asRecord(payload?.paymentMethodDetails),
+          failureReason:
+            this.extractStringFromCandidates(candidates, [
+              'failureReason',
+              'failure_reason',
+              'reason',
+              'message',
+            ]) ?? null,
+          rawEvent: payloadForStorage,
+          verified: true,
+          checkedAt: new Date().toISOString(),
+          source: 'webhook',
+        },
       }),
     });
 
@@ -738,7 +930,10 @@ export class WebhooksService {
           };
         }
 
-        if (!canTransitionPaymentStatus(payment.status, args.mappedStatus)) {
+        if (
+          payment.status !== args.mappedStatus &&
+          !canTransitionPaymentStatus(payment.status, args.mappedStatus)
+        ) {
           this.logStructured('warn', 'payment.transition_ignored', {
             requestId: args.requestId,
             paymentId: payment.id,
@@ -904,6 +1099,27 @@ export class WebhooksService {
           };
         }
 
+        if (
+          payment.status === PaymentStatus.PAID &&
+          args.mappedStatus === PaymentStatus.PAID
+        ) {
+          this.logStructured('log', 'payment.idempotent_paid', {
+            requestId: args.requestId,
+            paymentId: payment.id,
+            reference: payment.reference,
+          });
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
         if (!canTransitionPaymentStatus(payment.status, args.mappedStatus)) {
           this.logStructured('warn', 'payment.transition_ignored', {
             requestId: args.requestId,
@@ -978,6 +1194,197 @@ export class WebhooksService {
         this.logStructured('log', 'webhook.deduplicated', {
           requestId: args.requestId,
           provider: 'OZOW',
+          providerEventId: args.providerEventId,
+        });
+        return {
+          deduplicated: true,
+          statusChanged: false,
+          updatedPayment: null,
+        };
+      }
+      throw error;
+    }
+  }
+
+  private async persistAndApplyYocoWebhook(args: {
+    requestId: string;
+    providerEventId: string;
+    eventType: string | null;
+    paymentReference: string;
+    mappedStatus: PaymentStatus;
+    checkoutId: string | null;
+    providerPaymentId: string | null;
+    signature: string | null;
+    payload: Prisma.InputJsonValue;
+    rawGateway: Prisma.InputJsonValue;
+  }) {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existingEvent = await tx.webhookEvent.findUnique({
+          where: {
+            provider_providerEventId: {
+              provider: 'YOCO',
+              providerEventId: args.providerEventId,
+            },
+          },
+          select: { id: true, processedAt: true },
+        });
+
+        if (existingEvent?.processedAt) {
+          this.logStructured('log', 'webhook.deduplicated', {
+            requestId: args.requestId,
+            provider: 'YOCO',
+            providerEventId: args.providerEventId,
+          });
+          return {
+            deduplicated: true,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        const webhookEventId =
+          existingEvent?.id ??
+          (
+            await tx.webhookEvent.create({
+              data: {
+                provider: 'YOCO',
+                providerEventId: args.providerEventId,
+                eventType: args.eventType,
+                payoutReference: args.paymentReference,
+                payload: args.payload,
+                signature: args.signature,
+              },
+              select: { id: true },
+            })
+          ).id;
+
+        if (existingEvent?.id) {
+          await tx.webhookEvent.update({
+            where: { id: existingEvent.id },
+            data: {
+              eventType: args.eventType,
+              payoutReference: args.paymentReference,
+              payload: args.payload,
+              signature: args.signature,
+            },
+          });
+        }
+
+        const payment = await tx.payment.findUnique({
+          where: { reference: args.paymentReference },
+          select: { id: true, merchantId: true, reference: true, status: true },
+        });
+
+        if (!payment) {
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        if (
+          payment.status === PaymentStatus.PAID &&
+          args.mappedStatus === PaymentStatus.PAID
+        ) {
+          this.logStructured('log', 'payment.idempotent_paid', {
+            requestId: args.requestId,
+            paymentId: payment.id,
+            reference: payment.reference,
+          });
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        if (!canTransitionPaymentStatus(payment.status, args.mappedStatus)) {
+          this.logStructured('warn', 'payment.transition_ignored', {
+            requestId: args.requestId,
+            paymentId: payment.id,
+            reference: payment.reference,
+            from: payment.status,
+            to: args.mappedStatus,
+          });
+          await tx.webhookEvent.update({
+            where: { id: webhookEventId },
+            data: { processedAt: new Date() },
+          });
+
+          return {
+            deduplicated: false,
+            statusChanged: false,
+            updatedPayment: null,
+          };
+        }
+
+        const latestAttempt = await tx.paymentAttempt.findFirst({
+          where: { paymentId: payment.id },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true },
+        });
+        const updatedPayment = await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            ...(payment.status !== args.mappedStatus
+              ? { status: args.mappedStatus }
+              : {}),
+            gateway: GatewayProvider.YOCO,
+            gatewayRef: args.checkoutId ?? undefined,
+            rawGateway: args.rawGateway,
+          },
+          select: { id: true, merchantId: true, reference: true, status: true },
+        });
+        const targetAttemptStatus = this.mapPaymentStatusToAttemptStatus(
+          args.mappedStatus,
+        );
+        if (
+          latestAttempt &&
+          targetAttemptStatus &&
+          latestAttempt.status !== targetAttemptStatus
+        ) {
+          await tx.paymentAttempt.update({
+            where: { id: latestAttempt.id },
+            data: { status: targetAttemptStatus },
+            select: { id: true },
+          });
+        }
+
+        this.logStructured('log', 'payment.updated', {
+          requestId: args.requestId,
+          paymentId: updatedPayment.id,
+          reference: updatedPayment.reference,
+          from: payment.status,
+          to: updatedPayment.status,
+        });
+
+        await tx.webhookEvent.update({
+          where: { id: webhookEventId },
+          data: { processedAt: new Date() },
+        });
+
+        return {
+          deduplicated: false,
+          statusChanged: args.mappedStatus !== payment.status,
+          updatedPayment,
+        };
+      });
+    } catch (error) {
+      if (this.isWebhookEventDuplicateError(error)) {
+        this.logStructured('log', 'webhook.deduplicated', {
+          requestId: args.requestId,
+          provider: 'YOCO',
           providerEventId: args.providerEventId,
         });
         return {
@@ -2068,6 +2475,81 @@ export class WebhooksService {
     if (typeof rawBody === 'string') return rawBody;
     if (Buffer.isBuffer(rawBody)) return rawBody.toString('utf8');
     return JSON.stringify(body ?? {});
+  }
+
+  private getHeaderValue(
+    headers: Record<string, string | string[] | undefined> | undefined,
+    key: string,
+  ) {
+    if (!headers) return null;
+
+    const direct = headers[key];
+    if (typeof direct === 'string' && direct.trim()) return direct.trim();
+    if (Array.isArray(direct) && direct[0]?.trim()) return direct[0].trim();
+
+    const lowerKey = key.toLowerCase();
+    for (const [headerKey, value] of Object.entries(headers)) {
+      if (headerKey.toLowerCase() !== lowerKey) continue;
+      if (typeof value === 'string' && value.trim()) return value.trim();
+      if (Array.isArray(value) && value[0]?.trim()) return value[0].trim();
+    }
+
+    return null;
+  }
+
+  private assertYocoWebhookSignature(
+    headers: Record<string, string | string[] | undefined> | undefined,
+    rawBody: string,
+    secret: string,
+  ) {
+    const webhookId = this.getHeaderValue(headers, 'webhook-id');
+    const webhookTimestamp = this.getHeaderValue(headers, 'webhook-timestamp');
+    const signatureHeader = this.getHeaderValue(headers, 'webhook-signature');
+
+    if (!webhookId || !webhookTimestamp || !signatureHeader) {
+      throw new UnauthorizedException('Missing Yoco webhook signature headers');
+    }
+
+    const toleranceSeconds = this.parsePositiveInt(
+      process.env.YOCO_WEBHOOK_TOLERANCE_SECONDS,
+      YOCO_DEFAULT_WEBHOOK_TOLERANCE_SECONDS,
+    );
+    const timestampMs = Number(webhookTimestamp) * 1000;
+    if (!Number.isFinite(timestampMs)) {
+      throw new UnauthorizedException('Invalid Yoco webhook timestamp');
+    }
+
+    if (Math.abs(Date.now() - timestampMs) > toleranceSeconds * 1000) {
+      throw new UnauthorizedException('Stale Yoco webhook timestamp');
+    }
+
+    const trimmedSecret = secret.trim();
+    const secretPayload = trimmedSecret.startsWith('whsec_')
+      ? trimmedSecret.slice('whsec_'.length)
+      : trimmedSecret;
+    const secretBytes = Buffer.from(secretPayload, 'base64');
+    const signedContent = `${webhookId}.${webhookTimestamp}.${rawBody}`;
+    const expectedSignature = createHmac('sha256', secretBytes)
+      .update(signedContent)
+      .digest('base64');
+
+    const providedSignatures = signatureHeader
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => {
+        const [, signature] = value.split(',', 2);
+        return signature?.trim() ?? null;
+      })
+      .filter((value): value is string => Boolean(value));
+
+    const hasMatch = providedSignatures.some((signature) =>
+      this.constantTimeEquals(signature, expectedSignature),
+    );
+
+    if (!hasMatch) {
+      throw new UnauthorizedException('Invalid Yoco webhook signature');
+    }
   }
 
   private signWebhookDelivery(

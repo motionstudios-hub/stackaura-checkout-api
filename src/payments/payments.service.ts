@@ -24,6 +24,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { RoutingEngine } from '../routing/routing.engine';
 import { GatewayRegistry } from '../gateways/gateway.registry';
 import { OzowGateway } from '../gateways/ozow.gateway';
+import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from '../merchants/merchants.service';
 import {
   OZOW_CANCEL_URL,
@@ -33,6 +34,10 @@ import {
   resolveOzowConfig,
 } from '../gateways/ozow.config';
 import { resolveYocoConfig } from '../gateways/yoco.config';
+import {
+  mapYocoCheckoutStatusToPaymentStatus,
+  mapYocoEventToPaymentStatus,
+} from '../gateways/yoco.lifecycle';
 import { canTransitionPaymentStatus } from './payment-status.transitions';
 import * as crypto from 'crypto';
 import type { PublicOzowSignupInitiateDto } from './ozow.dto';
@@ -150,6 +155,7 @@ export class PaymentsService {
     private readonly routingEngine: RoutingEngine,
     private readonly gatewayRegistry: GatewayRegistry,
     private readonly ozowGateway: OzowGateway,
+    private readonly yocoGateway: YocoGateway,
     private readonly merchantsService: MerchantsService,
   ) {}
   private async createGatewayRedirect(args: {
@@ -266,9 +272,11 @@ export class PaymentsService {
   ): Prisma.InputJsonObject {
     return {
       provider: gateway,
+      externalReference: session.externalReference ?? null,
       request: {
         redirectUrl: session.redirectUrl,
         redirectForm: session.redirectForm ?? null,
+        raw: session.raw ?? null,
         generatedAt: new Date().toISOString(),
       },
     } as Prisma.InputJsonObject;
@@ -305,6 +313,60 @@ export class PaymentsService {
       redirectUrl,
       redirectForm,
       redirectMethod: redirectForm?.method ?? null,
+    };
+  }
+
+  private extractYocoState(rawGateway: Prisma.JsonValue | null | undefined) {
+    const root = this.asRecord(rawGateway);
+    const requestRecord = this.asRecord(root?.request);
+    const requestRaw = this.asRecord(requestRecord?.raw);
+    const yocoRecord = this.asRecord(root?.yoco);
+    const eventRecord = this.asRecord(yocoRecord?.rawEvent);
+
+    const checkoutId =
+      (typeof yocoRecord?.checkoutId === 'string' && yocoRecord.checkoutId.trim()) ||
+      (typeof requestRaw?.id === 'string' && requestRaw.id.trim()) ||
+      (typeof root?.externalReference === 'string' && root.externalReference.trim()) ||
+      null;
+    const checkoutStatus =
+      (typeof yocoRecord?.checkoutStatus === 'string' &&
+        yocoRecord.checkoutStatus.trim()) ||
+      (typeof requestRaw?.status === 'string' && requestRaw.status.trim()) ||
+      null;
+    const paymentId =
+      (typeof yocoRecord?.paymentId === 'string' && yocoRecord.paymentId.trim()) ||
+      (typeof requestRaw?.paymentId === 'string' && requestRaw.paymentId.trim()) ||
+      null;
+    const eventType =
+      typeof yocoRecord?.eventType === 'string' && yocoRecord.eventType.trim()
+        ? yocoRecord.eventType.trim()
+        : null;
+    const paymentStatus =
+      typeof yocoRecord?.paymentStatus === 'string' &&
+      yocoRecord.paymentStatus.trim()
+        ? yocoRecord.paymentStatus.trim()
+        : null;
+    const processingMode =
+      (typeof yocoRecord?.processingMode === 'string' &&
+        yocoRecord.processingMode.trim()) ||
+      (typeof requestRaw?.processingMode === 'string' &&
+        requestRaw.processingMode.trim()) ||
+      null;
+    const failureReason =
+      typeof yocoRecord?.failureReason === 'string' &&
+      yocoRecord.failureReason.trim()
+        ? yocoRecord.failureReason.trim()
+        : null;
+
+    return {
+      checkoutId,
+      checkoutStatus,
+      paymentId,
+      eventType,
+      paymentStatus,
+      processingMode,
+      failureReason,
+      raw: eventRecord ?? requestRaw ?? root,
     };
   }
 
@@ -1813,7 +1875,10 @@ export class PaymentsService {
       localStatus = nextStatus;
       synced = true;
 
-      if (nextStatus === PaymentStatus.PAID) {
+      if (
+        payment.status !== nextStatus &&
+        nextStatus === PaymentStatus.PAID
+      ) {
         await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
         await this.fulfillPaidSignupPayment(payment.id);
       }
@@ -1831,6 +1896,217 @@ export class PaymentsService {
       synced,
       isTest: ozowConfig.isTest,
       raw: transaction.raw,
+    };
+  }
+
+  async getYocoPaymentStatus(merchantIdPlain: string, referencePlain: string) {
+    const merchantId = merchantIdPlain?.trim();
+    if (!merchantId) throw new UnauthorizedException('Invalid API key');
+
+    const reference = referencePlain?.trim();
+    if (!reference) throw new BadRequestException('reference is required');
+
+    const payment = await this.prisma.payment.findFirst({
+      where: { merchantId, reference },
+      select: {
+        id: true,
+        merchantId: true,
+        reference: true,
+        amountCents: true,
+        currency: true,
+        status: true,
+        gateway: true,
+        gatewayRef: true,
+        rawGateway: true,
+        expiresAt: true,
+        merchant: {
+          select: {
+            yocoPublicKey: true,
+            yocoSecretKey: true,
+            yocoTestMode: true,
+          },
+        },
+      },
+    });
+
+    if (!payment) throw new NotFoundException('Payment not found');
+    if (payment.gateway && payment.gateway !== GatewayProvider.YOCO) {
+      throw new BadRequestException('Payment is not a Yoco payment');
+    }
+
+    const snapshot = this.extractYocoState(payment.rawGateway);
+    const expired = payment.expiresAt.getTime() <= Date.now();
+    let providerLookupError: string | null = null;
+    let providerSnapshot:
+      | Awaited<ReturnType<YocoGateway['getCheckoutStatus']>>
+      | null = null;
+
+    const checkoutId = snapshot.checkoutId ?? payment.gatewayRef;
+    if (checkoutId) {
+      try {
+        const yocoConfig = resolveYocoConfig({
+          yocoPublicKey: payment.merchant.yocoPublicKey,
+          yocoSecretKey: payment.merchant.yocoSecretKey,
+          yocoTestMode: payment.merchant.yocoTestMode,
+        });
+
+        providerSnapshot = await this.yocoGateway.getCheckoutStatus({
+          checkoutId,
+          config: {
+            yocoPublicKey: yocoConfig.publicKey,
+            yocoSecretKey: yocoConfig.secretKey,
+            yocoTestMode: yocoConfig.testMode,
+          },
+        });
+
+        if (
+          providerSnapshot.externalReference &&
+          providerSnapshot.externalReference !== payment.reference
+        ) {
+          throw new BadRequestException('Yoco checkout reference mismatch');
+        }
+        if (
+          providerSnapshot.clientReferenceId &&
+          providerSnapshot.clientReferenceId !== payment.id
+        ) {
+          throw new BadRequestException('Yoco checkout payment id mismatch');
+        }
+      } catch (error) {
+        providerLookupError =
+          error instanceof Error ? error.message : 'Unknown Yoco lookup error';
+        this.logger.warn(
+          JSON.stringify({
+            event: 'yoco.status_lookup.failed',
+            paymentId: payment.id,
+            reference: payment.reference,
+            checkoutId,
+            error: providerLookupError,
+          }),
+        );
+      }
+    }
+
+    const checkoutStatus =
+      providerSnapshot?.providerStatus ?? snapshot.checkoutStatus;
+    const providerPaymentId = providerSnapshot?.paymentId ?? snapshot.paymentId;
+    const processingMode =
+      providerSnapshot?.processingMode ?? snapshot.processingMode;
+    const mappedFromWebhook = mapYocoEventToPaymentStatus({
+      eventType: snapshot.eventType,
+      paymentStatus: snapshot.paymentStatus,
+    });
+    const nextStatus =
+      mappedFromWebhook ??
+      (checkoutStatus || providerPaymentId
+        ? mapYocoCheckoutStatusToPaymentStatus({
+            checkoutStatus,
+            paymentId: providerPaymentId,
+            expired,
+          })
+        : expired &&
+            payment.status !== PaymentStatus.PAID &&
+            payment.status !== PaymentStatus.FAILED &&
+            payment.status !== PaymentStatus.CANCELLED
+          ? PaymentStatus.CANCELLED
+          : payment.status);
+
+    let localStatus = payment.status;
+    let synced = false;
+
+    const shouldPersistLookup =
+      providerSnapshot !== null ||
+      providerLookupError !== null ||
+      payment.status !== nextStatus;
+
+    if (
+      shouldPersistLookup &&
+      (payment.status === nextStatus ||
+        canTransitionPaymentStatus(payment.status, nextStatus))
+    ) {
+      await this.prisma.$transaction(async (tx) => {
+        const latestAttempt = await tx.paymentAttempt.findFirst({
+          where: { paymentId: payment.id },
+          orderBy: { createdAt: 'desc' },
+          select: { id: true, status: true },
+        });
+
+        await tx.payment.update({
+          where: { id: payment.id },
+          data: {
+            ...(payment.status !== nextStatus ? { status: nextStatus } : {}),
+            gateway: GatewayProvider.YOCO,
+            gatewayRef: providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+            rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
+              provider: 'YOCO',
+              yoco: {
+                checkoutId:
+                  providerSnapshot?.checkoutId ??
+                  snapshot.checkoutId ??
+                  payment.gatewayRef,
+                checkoutStatus,
+                paymentId: providerPaymentId,
+                paymentStatus: snapshot.paymentStatus,
+                eventType: snapshot.eventType,
+                processingMode,
+                failureReason: snapshot.failureReason,
+                checkedAt: new Date().toISOString(),
+                lookupError: providerLookupError,
+                externalReference:
+                  providerSnapshot?.externalReference ?? payment.reference,
+                clientReferenceId: providerSnapshot?.clientReferenceId ?? payment.id,
+                source:
+                  providerSnapshot !== null
+                    ? 'provider_lookup_and_webhook'
+                    : 'stored_checkout_and_webhook',
+                expired,
+                rawLookup: providerSnapshot?.raw ?? null,
+                rawEvent: snapshot.raw,
+              },
+            }),
+          },
+          select: { id: true },
+        });
+
+        const attemptStatus = this.mapPaymentStatusToAttemptStatus(nextStatus);
+        if (
+          latestAttempt &&
+          attemptStatus &&
+          latestAttempt.status !== attemptStatus
+        ) {
+          await tx.paymentAttempt.update({
+            where: { id: latestAttempt.id },
+            data: { status: attemptStatus },
+            select: { id: true },
+          });
+        }
+      });
+
+      localStatus = nextStatus;
+      synced = true;
+
+      if (nextStatus === PaymentStatus.PAID) {
+        await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
+        await this.fulfillPaidSignupPayment(payment.id);
+      }
+    }
+
+    return {
+      paymentId: payment.id,
+      reference: payment.reference,
+      localStatus,
+      providerStatus: snapshot.paymentStatus ?? checkoutStatus,
+      providerEventType: snapshot.eventType,
+      checkoutId:
+        providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+      providerPaymentId,
+      processingMode,
+      failureReason: snapshot.failureReason,
+      gatewayRef:
+        providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+      expired,
+      synced,
+      providerLookupError,
+      raw: providerSnapshot?.raw ?? snapshot.raw,
     };
   }
 

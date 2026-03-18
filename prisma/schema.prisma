@@ -23,6 +23,9 @@ model Merchant {
   yocoPublicKey         String?
   yocoSecretKey         String?
   yocoTestMode          Boolean?
+  yocoWebhookId         String?
+  yocoWebhookSecret     String?
+  yocoWebhookUrl        String?
   platformFeeBps        Int               @default(0)
   platformFeeFixedCents Int               @default(0)
   gatewayOrder          Json              @default("[\"OZOW\", \"PAYFAST\"]")

@@ -1,4 +1,6 @@
 export const YOCO_CHECKOUT_API_URL = 'https://payments.yoco.com/api/checkouts';
+export const YOCO_WEBHOOKS_API_URL = 'https://payments.yoco.com/api/webhooks';
+export const YOCO_DEFAULT_WEBHOOK_TOLERANCE_SECONDS = 180;
 
 export type YocoConfigSource = {
   yocoPublicKey?: string | null;

@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { resolveOzowConfig } from '../gateways/ozow.config';
+import { YocoGateway } from '../gateways/yoco.gateway';
 import {
   assertYocoConfigConsistency,
   detectYocoModeFromKeys,
@@ -18,7 +19,10 @@ import crypto from 'crypto';
 export class MerchantsService {
   private readonly logger = new Logger(MerchantsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly yocoGateway: YocoGateway,
+  ) {}
 
   async listMerchants() {
     try {
@@ -500,12 +504,17 @@ export class MerchantsService {
 
       const merchant = await this.prisma.merchant.findUnique({
         where: { id },
-        select: {
-          id: true,
-          yocoTestMode: true,
-        },
-      });
-      if (!merchant) throw new NotFoundException('Merchant not found');
+      select: {
+        id: true,
+        yocoTestMode: true,
+        yocoPublicKey: true,
+        yocoSecretKey: true,
+        yocoWebhookId: true,
+        yocoWebhookSecret: true,
+        yocoWebhookUrl: true,
+      },
+    });
+    if (!merchant) throw new NotFoundException('Merchant not found');
 
       const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
       const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
@@ -527,6 +536,33 @@ export class MerchantsService {
         );
       }
 
+      const desiredWebhookUrl = this.yocoGateway.resolveWebhookUrl();
+      const credentialsChanged =
+        merchant.yocoPublicKey !== yocoPublicKey ||
+        merchant.yocoSecretKey !== yocoSecretKey ||
+        merchant.yocoTestMode !== yocoTestMode;
+
+      const hasReusableWebhook =
+        !credentialsChanged &&
+        Boolean(merchant.yocoWebhookId?.trim()) &&
+        Boolean(merchant.yocoWebhookSecret?.trim()) &&
+        merchant.yocoWebhookUrl?.trim() === desiredWebhookUrl;
+
+      const webhook =
+        hasReusableWebhook
+          ? {
+              id: merchant.yocoWebhookId?.trim() ?? null,
+              secret: merchant.yocoWebhookSecret?.trim() ?? null,
+              url: merchant.yocoWebhookUrl?.trim() ?? desiredWebhookUrl,
+            }
+          : await this.registerYocoWebhook({
+              merchantId: id,
+              publicKey: yocoPublicKey,
+              secretKey: yocoSecretKey,
+              testMode: yocoTestMode,
+              desiredWebhookUrl,
+            });
+
       const updated = await this.prisma.merchant.update({
         where: { id },
         data: {
@@ -534,12 +570,18 @@ export class MerchantsService {
           yocoPublicKey,
           yocoSecretKey,
           yocoTestMode,
+          yocoWebhookId: webhook.id,
+          yocoWebhookSecret: webhook.secret,
+          yocoWebhookUrl: webhook.url,
         },
         select: {
           id: true,
           yocoPublicKey: true,
           yocoSecretKey: true,
           yocoTestMode: true,
+          yocoWebhookId: true,
+          yocoWebhookSecret: true,
+          yocoWebhookUrl: true,
           updatedAt: true,
         },
       });
@@ -832,6 +874,9 @@ export class MerchantsService {
     yocoPublicKey: string | null;
     yocoSecretKey: string | null;
     yocoTestMode: boolean | null;
+    yocoWebhookId?: string | null;
+    yocoWebhookSecret?: string | null;
+    yocoWebhookUrl?: string | null;
     updatedAt: Date;
   }) {
     const hasPublicKey = Boolean(merchant.yocoPublicKey?.trim());
@@ -858,7 +903,46 @@ export class MerchantsService {
       hasPublicKey,
       hasSecretKey,
       testMode,
+      webhookConfigured: Boolean(
+        merchant.yocoWebhookSecret?.trim() && merchant.yocoWebhookUrl?.trim(),
+      ),
       updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
     };
+  }
+
+  private async registerYocoWebhook(args: {
+    merchantId: string;
+    publicKey: string;
+    secretKey: string;
+    testMode: boolean;
+    desiredWebhookUrl: string;
+  }) {
+    const subscription = await this.yocoGateway.registerWebhookSubscription({
+      config: {
+        yocoPublicKey: args.publicKey,
+        yocoSecretKey: args.secretKey,
+        yocoTestMode: args.testMode,
+      },
+      name: this.buildYocoWebhookName(args.merchantId, args.testMode),
+      url: args.desiredWebhookUrl,
+    });
+
+    if (!subscription.secret) {
+      throw new BadRequestException(
+        'Yoco webhook registration did not return a secret',
+      );
+    }
+
+    return {
+      id: subscription.id,
+      secret: subscription.secret,
+      url: subscription.url,
+    };
+  }
+
+  private buildYocoWebhookName(merchantId: string, testMode: boolean) {
+    const compactMerchantId = merchantId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
+    const mode = testMode ? 'test' : 'live';
+    return `stackaura-${mode}-${compactMerchantId || 'merchant'}`;
   }
 }

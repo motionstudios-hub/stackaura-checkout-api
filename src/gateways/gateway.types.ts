@@ -20,6 +20,7 @@ export type GatewayCreatePaymentResult = {
   redirectUrl: string;
   externalReference?: string | null;
   redirectForm?: GatewayRedirectForm | null;
+  raw?: unknown;
 };
 
 export type GatewayStatusResult = {

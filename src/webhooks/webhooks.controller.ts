@@ -82,6 +82,24 @@ export class WebhooksController {
     return { ok: true };
   }
 
+  @ApiOperation({ summary: 'Receive Yoco webhook callback' })
+  @Public()
+  @HttpCode(200)
+  @Post('yoco')
+  async yoco(
+    @Req() req: RawBodyRequest,
+    @Body() body: Record<string, unknown>,
+    @Headers() allHeaders: Record<string, string | string[] | undefined>,
+  ) {
+    const requestId = this.resolveRequestId(req);
+    await this.webhooksService.handleYocoWebhook(body, {
+      requestId,
+      rawBody: req?.rawBody,
+      headers: allHeaders,
+    });
+    return { ok: true };
+  }
+
   // Deriv PA webhook: POST /v1/webhooks/deriv-pa
   @ApiOperation({ summary: 'Receive PayGate-style signed webhook callback' })
   @Public()
