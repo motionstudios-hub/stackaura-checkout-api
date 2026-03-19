@@ -26,6 +26,7 @@ describe('PaymentsService', () => {
       create: jest.Mock;
       findFirst: jest.Mock;
       update: jest.Mock;
+      updateMany: jest.Mock;
     };
     $transaction: jest.Mock;
   };
@@ -88,6 +89,7 @@ describe('PaymentsService', () => {
         create: jest.fn(),
         findFirst: jest.fn(),
         update: jest.fn(),
+        updateMany: jest.fn(),
       },
       $transaction: jest.fn((input: unknown) => {
         if (typeof input === 'function') {
@@ -116,6 +118,7 @@ describe('PaymentsService', () => {
       status: 'CREATED',
     });
     prisma.paymentAttempt.update.mockResolvedValue({ id: 'att-1' });
+    prisma.paymentAttempt.updateMany.mockResolvedValue({ count: 0 });
     prisma.payment.update.mockResolvedValue({ id: 'p-1' });
     prisma.merchant.update.mockResolvedValue({ id: 'm-1' });
 
@@ -842,6 +845,83 @@ describe('PaymentsService', () => {
     await expect(service.failoverPayment('m-1', 'INV-LOCKED')).rejects.toThrow(
       'Automatic failover is disabled because this payment is locked to Yoco',
     );
+  });
+
+
+  it('cancels the superseded Yoco attempt when hosted checkout switches explicitly to Ozow', async () => {
+    prisma.payment.findFirst.mockResolvedValue({
+      id: 'p-switch',
+      checkoutToken: 'checkout-switch',
+      merchantId: 'm-1',
+      reference: 'INV-SWITCH',
+      amountCents: 2500,
+      currency: 'ZAR',
+      status: 'CREATED',
+      description: 'Switch order',
+      customerEmail: 'buyer@example.com',
+      expiresAt: new Date('2099-03-20T10:00:00.000Z'),
+      gateway: 'YOCO',
+      rawGateway: {
+        routing: {
+          requestedGateway: 'AUTO',
+        },
+      },
+      merchant: {
+        name: 'Switch Merchant',
+      },
+      attempts: [
+        {
+          redirectUrl: 'https://c.yoco.com/checkout/ch_123',
+          gateway: 'YOCO',
+        },
+      ],
+    });
+    prisma.merchant.findUnique.mockResolvedValue({
+      ...merchantBase,
+      id: 'm-1',
+      name: 'Switch Merchant',
+      ozowSiteCode: 'MERCHANT-SC',
+      ozowPrivateKey: 'merchant-private',
+      ozowApiKey: 'merchant-api',
+      ozowIsTest: true,
+      yocoPublicKey: 'pk_test_public',
+      yocoSecretKey: 'sk_test_secret',
+      yocoTestMode: true,
+      gatewayOrder: ['YOCO', 'OZOW'],
+    });
+    prisma.paymentAttempt.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.continueHostedCheckout('checkout-switch', 'OZOW');
+
+    expect(prisma.paymentAttempt.updateMany).toHaveBeenCalledWith({
+      where: {
+        paymentId: 'p-switch',
+        gateway: { not: 'OZOW' },
+        status: { in: ['CREATED', 'PENDING'] },
+      },
+      data: {
+        status: 'CANCELLED',
+      },
+    });
+    expect(prisma.paymentAttempt.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paymentId: 'p-switch',
+          gateway: 'OZOW',
+        }),
+      }),
+    );
+    expect(prisma.payment.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'p-switch' },
+        data: expect.objectContaining({
+          gateway: 'OZOW',
+        }),
+      }),
+    );
+    expect(result.gateway).toBe('OZOW');
+    expect(result.redirectForm?.action).toBe('https://pay.ozow.com');
+    expect(result.redirectForm?.fields.SuccessUrl).toContain('reference=INV-SWITCH');
   });
 
   it('maps public signup payload into an Ozow payment with defaults', async () => {

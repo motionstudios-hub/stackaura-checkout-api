@@ -13,6 +13,8 @@ import {
   normalizeOzowTransactionReference,
   OZOW_REQUEST_HASH_FIELDS,
   resolveOzowConfig,
+  resolveOzowRedirectUrls,
+  type ResolvedOzowConfig,
 } from './ozow.config';
 
 type OzowStatusLookupArgs = {
@@ -40,6 +42,18 @@ export class OzowGateway implements GatewayAdapter {
     input: GatewayCreatePaymentInput,
   ): Promise<GatewayCreatePaymentResult> {
     const config = resolveOzowConfig(this.configOverrides(input.config));
+    const redirectUrls = resolveOzowRedirectUrls({
+      successUrl: input.metadata?.returnUrl ?? config.successUrl,
+      cancelUrl: input.metadata?.cancelUrl ?? config.cancelUrl,
+      errorUrl: input.metadata?.errorUrl ?? config.errorUrl,
+      notifyUrl: input.metadata?.notifyUrl ?? config.notifyUrl,
+    });
+    const trackedRedirectUrls = this.decorateRedirectUrls(redirectUrls, {
+      reference: input.reference,
+      paymentId: input.paymentId,
+      gateway: 'OZOW',
+    });
+
     const redirectForm = buildOzowPaymentForm({
       siteCode: config.siteCode,
       privateKey: config.privateKey,
@@ -49,13 +63,37 @@ export class OzowGateway implements GatewayAdapter {
       bankReference: input.metadata?.bankReference ?? null,
       customer: input.metadata?.customer ?? input.customerEmail ?? null,
       optional1: input.paymentId,
-      successUrl: input.metadata?.returnUrl ?? config.successUrl,
-      cancelUrl: input.metadata?.cancelUrl ?? config.cancelUrl,
-      errorUrl: input.metadata?.errorUrl ?? config.errorUrl,
-      notifyUrl: input.metadata?.notifyUrl ?? config.notifyUrl,
+      successUrl: trackedRedirectUrls.successUrl,
+      cancelUrl: trackedRedirectUrls.cancelUrl,
+      errorUrl: trackedRedirectUrls.errorUrl,
+      notifyUrl: trackedRedirectUrls.notifyUrl,
       isTest: config.isTest,
     });
-    this.logRedirectFormDebug(input.reference, redirectForm.fields, config.privateKey);
+
+    if (config.source === 'merchant' && config.hasPartialMerchantConfig) {
+      this.logger.warn(
+        JSON.stringify({
+          event: 'ozow.config.partial',
+          merchantId: input.merchantId,
+          reference: input.reference,
+          configSource: config.source,
+          modeSource: config.modeSource,
+          testMode: config.isTest,
+          siteCode: config.siteCode,
+          hasPrivateKey: Boolean(config.privateKey),
+          hasApiKey: Boolean(config.apiKey),
+        }),
+      );
+    }
+
+    this.logRedirectFormDebug({
+      merchantId: input.merchantId,
+      reference: input.reference,
+      config,
+      redirectUrls: trackedRedirectUrls,
+      fields: redirectForm.fields,
+      privateKey: config.privateKey,
+    });
 
     return {
       redirectUrl: redirectForm.action,
@@ -116,18 +154,62 @@ export class OzowGateway implements GatewayAdapter {
       url.searchParams.set('IsTest', 'true');
     }
 
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        ApiKey: config.apiKey,
-      },
+    this.logStatusLookupRequest({
+      endpoint: url.toString(),
+      reference,
+      transactionId,
+      config,
     });
 
-    if (!response.ok) {
-      throw new Error(`Ozow status lookup failed with status ${response.status}`);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          ApiKey: config.apiKey,
+        },
+      });
+    } catch (error) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'ozow.status_lookup.request_error',
+          endpoint: url.toString(),
+          configSource: config.source,
+          modeSource: config.modeSource,
+          testMode: config.isTest,
+          reference,
+          transactionId,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack ?? null : null,
+        }),
+      );
+      throw error;
     }
 
-    const payload = (await response.json()) as unknown;
+    const payload = await this.readJsonOrTextPayload(response);
+    if (!response.ok) {
+      this.logger.error(
+        JSON.stringify({
+          event: 'ozow.status_lookup.failed',
+          endpoint: url.toString(),
+          configSource: config.source,
+          modeSource: config.modeSource,
+          testMode: config.isTest,
+          reference,
+          transactionId,
+          statusCode: response.status,
+          responseBody: this.sanitizeValue(payload),
+        }),
+      );
+
+      const providerMessage = this.extractProviderErrorMessage(payload);
+      throw new Error(
+        providerMessage
+          ? `Ozow status lookup failed: ${providerMessage}`
+          : `Ozow status lookup failed with status ${response.status}`,
+      );
+    }
+
     const record = this.pickTransactionRecord(payload, reference, transactionId);
     const providerStatus = this.pickString(record, ['Status']);
 
@@ -161,33 +243,184 @@ export class OzowGateway implements GatewayAdapter {
     };
   }
 
-  private logRedirectFormDebug(
-    reference: string,
-    fields: Record<string, string>,
-    privateKey: string | null,
+  private decorateRedirectUrls(
+    urls: {
+      successUrl: string;
+      cancelUrl: string;
+      errorUrl: string;
+      notifyUrl: string;
+    },
+    params: {
+      reference: string;
+      paymentId: string;
+      gateway: string;
+    },
   ) {
-    const shouldLog =
-      process.env.OZOW_DEBUG_LOGS?.trim().toLowerCase() === 'true';
-    if (!shouldLog) {
+    return {
+      successUrl: this.appendRedirectTrackingParams(urls.successUrl, params),
+      cancelUrl: this.appendRedirectTrackingParams(urls.cancelUrl, params),
+      errorUrl: this.appendRedirectTrackingParams(urls.errorUrl, params),
+      notifyUrl: this.appendRedirectTrackingParams(urls.notifyUrl, params),
+    };
+  }
+
+  private appendRedirectTrackingParams(
+    url: string,
+    params: {
+      reference: string;
+      paymentId: string;
+      gateway: string;
+    },
+  ) {
+    const resolved = new URL(url);
+    resolved.searchParams.set('reference', params.reference);
+    resolved.searchParams.set('paymentId', params.paymentId);
+    resolved.searchParams.set('gateway', params.gateway);
+    return resolved.toString();
+  }
+
+  private logStatusLookupRequest(args: {
+    endpoint: string;
+    reference: string;
+    transactionId: string | null;
+    config: ResolvedOzowConfig;
+  }) {
+    if (!this.shouldDebugLog()) {
+      return;
+    }
+
+    this.logger.log(
+      JSON.stringify({
+        event: 'ozow.status_lookup.request',
+        endpoint: args.endpoint,
+        configSource: args.config.source,
+        modeSource: args.config.modeSource,
+        testMode: args.config.isTest,
+        siteCode: args.config.siteCode,
+        hasApiKey: Boolean(args.config.apiKey),
+        reference: args.reference,
+        transactionId: args.transactionId,
+      }),
+    );
+  }
+
+  private logRedirectFormDebug(args: {
+    merchantId: string;
+    reference: string;
+    config: ResolvedOzowConfig;
+    redirectUrls: {
+      successUrl: string;
+      cancelUrl: string;
+      errorUrl: string;
+      notifyUrl: string;
+    };
+    fields: Record<string, string>;
+    privateKey: string | null;
+  }) {
+    if (!this.shouldDebugLog()) {
       return;
     }
 
     const hashMaterial = buildOzowHashMaterial(
-      fields,
-      privateKey,
+      args.fields,
+      args.privateKey,
       OZOW_REQUEST_HASH_FIELDS,
     );
 
     this.logger.log(
       JSON.stringify({
         event: 'ozow.redirect_form.generated',
-        reference,
-        fields,
+        endpoint: args.config.paymentUrl,
+        merchantId: args.merchantId,
+        reference: args.reference,
+        configSource: args.config.source,
+        modeSource: args.config.modeSource,
+        testMode: args.config.isTest,
+        siteCode: args.config.siteCode,
+        hasApiKey: Boolean(args.config.apiKey),
+        hasPrivateKey: Boolean(args.config.privateKey),
+        hasPartialMerchantConfig: args.config.hasPartialMerchantConfig,
+        redirectUrls: args.redirectUrls,
+        outboundFields: this.sanitizeOutboundFields(args.fields),
         hashFieldOrder: hashMaterial.orderedFields.map((field) => field.key),
-        hashInput: hashMaterial.hashInput,
-        hashCheck: fields.HashCheck,
+        hashFieldCount: hashMaterial.orderedFields.length,
+        hashInputLength: hashMaterial.hashInput.length,
       }),
     );
+  }
+
+  private shouldDebugLog() {
+    return process.env.OZOW_DEBUG_LOGS?.trim().toLowerCase() === 'true';
+  }
+
+  private sanitizeOutboundFields(fields: Record<string, string>) {
+    const sanitized: Record<string, string> = {};
+
+    for (const [key, value] of Object.entries(fields)) {
+      if (key.toLowerCase() === 'hashcheck' || key.toLowerCase() === 'hash') {
+        sanitized[key] = '[generated]';
+        continue;
+      }
+
+      sanitized[key] = value;
+    }
+
+    return sanitized;
+  }
+
+  private sanitizeValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map((item) => this.sanitizeValue(item));
+    }
+
+    if (!value || typeof value !== 'object') {
+      return value;
+    }
+
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, nested]) => {
+        const normalizedKey = key.trim().toLowerCase();
+        if (
+          normalizedKey.includes('apikey') ||
+          normalizedKey.includes('privatekey') ||
+          normalizedKey === 'hashcheck' ||
+          normalizedKey === 'hash'
+        ) {
+          return [key, '[redacted]'];
+        }
+
+        return [key, this.sanitizeValue(nested)];
+      }),
+    );
+  }
+
+  private extractProviderErrorMessage(payload: unknown) {
+    if (typeof payload === 'string' && payload.trim()) {
+      return payload.trim();
+    }
+
+    const record = this.asRecord(payload);
+    if (!record) {
+      return null;
+    }
+
+    return (
+      this.pickString(record, ['Message', 'message', 'Error', 'error']) ?? null
+    );
+  }
+
+  private async readJsonOrTextPayload(response: Response) {
+    const contentType = response.headers.get('content-type') ?? '';
+    if (contentType.toLowerCase().includes('application/json')) {
+      try {
+        return (await response.json()) as unknown;
+      } catch {
+        return null;
+      }
+    }
+
+    const text = await response.text();
+    return text.trim() ? text : null;
   }
 
   private mapProviderStatus(providerStatus: string | null) {

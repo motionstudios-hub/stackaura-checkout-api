@@ -1110,6 +1110,34 @@ export class PaymentsService {
     return null;
   }
 
+  private async cancelSupersededOpenAttempts(args: {
+    tx: Prisma.TransactionClient;
+    paymentId: string;
+    nextGateway: GatewayProvider;
+  }) {
+    const result = await args.tx.paymentAttempt.updateMany({
+      where: {
+        paymentId: args.paymentId,
+        gateway: { not: args.nextGateway },
+        status: { in: ['CREATED', 'PENDING'] },
+      },
+      data: {
+        status: 'CANCELLED',
+      },
+    });
+
+    if (result.count > 0) {
+      this.logger.log(
+        JSON.stringify({
+          event: 'payment.attempts.superseded',
+          paymentId: args.paymentId,
+          nextGateway: args.nextGateway,
+          cancelledAttempts: result.count,
+        }),
+      );
+    }
+  }
+
   private mapGatewayLookupStatus(
     status: 'pending' | 'succeeded' | 'failed',
   ): PaymentStatus {
@@ -2158,6 +2186,12 @@ export class PaymentsService {
     const externalReference = gatewaySession.externalReference ?? null;
 
     await this.prisma.$transaction(async (tx) => {
+      await this.cancelSupersededOpenAttempts({
+        tx,
+        paymentId: payment.id,
+        nextGateway: selectedGateway,
+      });
+
       await tx.paymentAttempt.create({
         data: {
           paymentId: payment.id,
@@ -3070,6 +3104,12 @@ export class PaymentsService {
     const externalReference = gatewaySession.externalReference ?? null;
 
     const attempt = await this.prisma.$transaction(async (tx) => {
+      await this.cancelSupersededOpenAttempts({
+        tx,
+        paymentId: payment.id,
+        nextGateway,
+      });
+
       const createdAttempt = await tx.paymentAttempt.create({
         data: {
           paymentId: payment.id,

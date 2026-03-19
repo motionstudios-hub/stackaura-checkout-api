@@ -109,6 +109,52 @@ describe('RoutingEngine', () => {
     ).toThrow('Gateway PAYSTACK is not available for this payment');
   });
 
+
+
+  it('marks Ozow unavailable when merchant config is partial instead of mixing env fallback values', () => {
+    const originalEnv = {
+      siteCode: process.env.OZOW_SITE_CODE,
+      privateKey: process.env.OZOW_PRIVATE_KEY,
+      apiKey: process.env.OZOW_API_KEY,
+      testMode: process.env.OZOW_TEST_MODE,
+    };
+
+    process.env.OZOW_SITE_CODE = 'ENV-SC';
+    process.env.OZOW_PRIVATE_KEY = 'env-private';
+    process.env.OZOW_API_KEY = 'env-api';
+    process.env.OZOW_TEST_MODE = 'true';
+
+    try {
+      const readiness = engine.getGatewayReadiness({
+        merchant: {
+          ...merchant,
+          ozowSiteCode: 'MERCHANT-SC',
+          ozowPrivateKey: null,
+          ozowApiKey: null,
+          ozowIsTest: null,
+        },
+        mode: 'STRICT_PRIORITY',
+        amountCents: 9900,
+        currency: 'ZAR',
+        customerEmail: 'buyer@example.com',
+      });
+
+      expect(
+        readiness.find((item) => item.gateway === GatewayProvider.OZOW),
+      ).toEqual(
+        expect.objectContaining({
+          ready: false,
+          issues: expect.arrayContaining(['merchant Ozow config is incomplete']),
+        }),
+      );
+    } finally {
+      process.env.OZOW_SITE_CODE = originalEnv.siteCode;
+      process.env.OZOW_PRIVATE_KEY = originalEnv.privateKey;
+      process.env.OZOW_API_KEY = originalEnv.apiKey;
+      process.env.OZOW_TEST_MODE = originalEnv.testMode;
+    }
+  });
+
   it('returns a clear no-gateway-available error when neither rail is ready', () => {
     expect(() =>
       engine.decide({

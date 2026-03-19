@@ -162,8 +162,14 @@ export class RoutingEngine {
           ozowIsTest: args.merchant.ozowIsTest ?? null,
         });
 
-        if (!config.siteCode || !config.privateKey) {
+        if (config.hasPartialMerchantConfig) {
+          issues.push('merchant Ozow config is incomplete');
+        } else if (!config.siteCode || !config.privateKey) {
           issues.push('merchant Ozow credentials are not configured');
+        }
+
+        if (currency && currency !== 'ZAR') {
+          issues.push('Ozow currently supports ZAR only');
         }
 
         return {

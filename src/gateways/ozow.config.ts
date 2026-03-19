@@ -50,6 +50,9 @@ export type OzowConfigSource = {
   ozowIsTest?: boolean | null;
 };
 
+export type OzowConfigOrigin = 'merchant' | 'env';
+export type OzowConfigModeSource = OzowConfigOrigin | 'default';
+
 export type ResolvedOzowConfig = {
   siteCode: string | null;
   privateKey: string | null;
@@ -61,6 +64,9 @@ export type ResolvedOzowConfig = {
   cancelUrl: string;
   errorUrl: string;
   notifyUrl: string;
+  source: OzowConfigOrigin;
+  modeSource: OzowConfigModeSource;
+  hasPartialMerchantConfig: boolean;
 };
 
 export type OzowRedirectForm = {
@@ -95,8 +101,56 @@ type BuildOzowPaymentFormArgs = {
   isTest: boolean;
 };
 
+type NormalizedOzowConfigValues = {
+  siteCode: string | null;
+  privateKey: string | null;
+  apiKey: string | null;
+  isTest: boolean | null;
+};
+
 const trimToNull = (value: unknown) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+
+function parseBooleanEnv(value: string | undefined) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return null;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
+  return null;
+}
+
+function normalizeOzowConfigValues(
+  source: OzowConfigSource = {},
+): NormalizedOzowConfigValues {
+  return {
+    siteCode: trimToNull(source.ozowSiteCode),
+    privateKey: trimToNull(source.ozowPrivateKey),
+    apiKey: trimToNull(source.ozowApiKey),
+    isTest: typeof source.ozowIsTest === 'boolean' ? source.ozowIsTest : null,
+  };
+}
+
+function currentEnvOzowConfig(): NormalizedOzowConfigValues {
+  return {
+    siteCode: trimToNull(process.env.OZOW_SITE_CODE),
+    privateKey: trimToNull(process.env.OZOW_PRIVATE_KEY),
+    apiKey: trimToNull(process.env.OZOW_API_KEY),
+    isTest: parseBooleanEnv(process.env.OZOW_TEST_MODE),
+  };
+}
+
+function hasAnyMerchantValue(config: NormalizedOzowConfigValues) {
+  return Boolean(
+    config.siteCode ||
+      config.privateKey ||
+      config.apiKey ||
+      config.isTest !== null,
+  );
+}
+
+function hasAnyMerchantCredential(config: NormalizedOzowConfigValues) {
+  return Boolean(config.siteCode || config.privateKey || config.apiKey);
+}
 
 export function parseOzowTestMode(value: string | boolean | null | undefined) {
   if (typeof value === 'boolean') return value;
@@ -111,23 +165,38 @@ export function parseOzowTestMode(value: string | boolean | null | undefined) {
 export function resolveOzowConfig(
   source: OzowConfigSource = {},
 ): ResolvedOzowConfig {
+  const merchantValues = normalizeOzowConfigValues(source);
+  const envValues = currentEnvOzowConfig();
+  const sourceValues = hasAnyMerchantValue(merchantValues)
+    ? merchantValues
+    : envValues;
+  const sourceOrigin: OzowConfigOrigin = hasAnyMerchantValue(merchantValues)
+    ? 'merchant'
+    : 'env';
+  const modeValue =
+    sourceOrigin === 'merchant' ? merchantValues.isTest : envValues.isTest;
+
   return {
-    siteCode:
-      trimToNull(source.ozowSiteCode) ?? trimToNull(process.env.OZOW_SITE_CODE),
-    privateKey:
-      trimToNull(source.ozowPrivateKey) ??
-      trimToNull(process.env.OZOW_PRIVATE_KEY),
-    apiKey:
-      trimToNull(source.ozowApiKey) ?? trimToNull(process.env.OZOW_API_KEY),
-    isTest: parseOzowTestMode(
-      source.ozowIsTest ?? process.env.OZOW_TEST_MODE ?? null,
-    ),
+    siteCode: sourceValues.siteCode,
+    privateKey: sourceValues.privateKey,
+    apiKey: sourceValues.apiKey,
+    isTest: parseOzowTestMode(modeValue),
     paymentUrl: OZOW_PAYMENT_URL,
     apiBaseUrl: OZOW_API_BASE_URL,
     successUrl: OZOW_SUCCESS_URL,
     cancelUrl: OZOW_CANCEL_URL,
     errorUrl: OZOW_ERROR_URL,
     notifyUrl: OZOW_NOTIFY_URL,
+    source: sourceOrigin,
+    modeSource:
+      modeValue !== null
+        ? sourceOrigin
+        : sourceOrigin === 'env' && envValues.isTest !== null
+          ? 'env'
+          : 'default',
+    hasPartialMerchantConfig:
+      hasAnyMerchantCredential(merchantValues) &&
+      (!merchantValues.siteCode || !merchantValues.privateKey),
   };
 }
 
@@ -144,6 +213,57 @@ export function hasOzowCredentials(
   return Boolean(trimToNull(siteCode)) && Boolean(trimToNull(privateKey));
 }
 
+export function resolveOzowRedirectUrl(
+  candidate: string | null | undefined,
+  fallback: string,
+  label: 'successUrl' | 'cancelUrl' | 'errorUrl' | 'notifyUrl',
+) {
+  const resolved = trimToNull(candidate) ?? fallback;
+
+  let parsed: URL;
+  try {
+    parsed = new URL(resolved);
+  } catch {
+    throw new Error(`Ozow ${label} must be an absolute HTTPS URL`);
+  }
+
+  if (parsed.protocol !== 'https:') {
+    throw new Error(`Ozow ${label} must be an absolute HTTPS URL`);
+  }
+
+  return parsed.toString();
+}
+
+export function resolveOzowRedirectUrls(args: {
+  successUrl?: string | null;
+  cancelUrl?: string | null;
+  errorUrl?: string | null;
+  notifyUrl?: string | null;
+}) {
+  return {
+    successUrl: resolveOzowRedirectUrl(
+      args.successUrl,
+      OZOW_SUCCESS_URL,
+      'successUrl',
+    ),
+    cancelUrl: resolveOzowRedirectUrl(
+      args.cancelUrl,
+      OZOW_CANCEL_URL,
+      'cancelUrl',
+    ),
+    errorUrl: resolveOzowRedirectUrl(
+      args.errorUrl,
+      OZOW_ERROR_URL,
+      'errorUrl',
+    ),
+    notifyUrl: resolveOzowRedirectUrl(
+      args.notifyUrl,
+      OZOW_NOTIFY_URL,
+      'notifyUrl',
+    ),
+  };
+}
+
 export function deriveOzowBankReference(
   reference: string,
   explicitBankReference?: string | null,
@@ -157,7 +277,12 @@ export function deriveOzowBankReference(
 }
 
 export function normalizeOzowTransactionReference(reference: string) {
-  return reference.trim().toUpperCase();
+  const normalized = reference.trim().toUpperCase();
+  if (!normalized) {
+    throw new Error('Ozow transaction reference is required');
+  }
+
+  return normalized;
 }
 
 export function computeOzowHashCheck(
@@ -204,12 +329,24 @@ export function buildOzowPaymentForm(
   if (!siteCode) {
     throw new Error('Ozow site code is required');
   }
+
+  const currencyCode = args.currency.trim().toUpperCase();
+  if (currencyCode !== 'ZAR') {
+    throw new Error('Ozow currently supports ZAR only');
+  }
+
+  const redirectUrls = resolveOzowRedirectUrls({
+    successUrl: args.successUrl,
+    cancelUrl: args.cancelUrl,
+    errorUrl: args.errorUrl,
+    notifyUrl: args.notifyUrl,
+  });
   const transactionReference = normalizeOzowTransactionReference(args.reference);
 
   const fieldEntries: Array<[string, string]> = [
     ['SiteCode', siteCode],
     ['CountryCode', 'ZA'],
-    ['CurrencyCode', args.currency.trim().toUpperCase()],
+    ['CurrencyCode', currencyCode],
     ['Amount', (args.amountCents / 100).toFixed(2)],
     ['TransactionReference', transactionReference],
     [
@@ -235,10 +372,10 @@ export function buildOzowPaymentForm(
   }
 
   fieldEntries.push(
-    ['CancelUrl', trimToNull(args.cancelUrl) ?? OZOW_CANCEL_URL],
-    ['ErrorUrl', trimToNull(args.errorUrl) ?? OZOW_ERROR_URL],
-    ['SuccessUrl', trimToNull(args.successUrl) ?? OZOW_SUCCESS_URL],
-    ['NotifyUrl', trimToNull(args.notifyUrl) ?? OZOW_NOTIFY_URL],
+    ['CancelUrl', redirectUrls.cancelUrl],
+    ['ErrorUrl', redirectUrls.errorUrl],
+    ['SuccessUrl', redirectUrls.successUrl],
+    ['NotifyUrl', redirectUrls.notifyUrl],
     ['IsTest', args.isTest ? 'true' : 'false'],
   );
 
