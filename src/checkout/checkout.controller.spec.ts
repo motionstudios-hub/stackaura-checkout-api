@@ -315,6 +315,16 @@ describe('CheckoutController', () => {
           recommended: false,
           locked: false,
         },
+        {
+          value: 'PAYSTACK',
+          label: 'Paystack',
+          description: 'Redirect checkout with Paystack.',
+          detail: 'Available for this checkout.',
+          available: true,
+          selected: false,
+          recommended: false,
+          locked: false,
+        },
       ],
     });
 
@@ -349,6 +359,9 @@ describe('CheckoutController', () => {
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('value="OZOW"'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('value="PAYSTACK"'),
     );
   });
 
@@ -398,6 +411,16 @@ describe('CheckoutController', () => {
           recommended: true,
           locked: false,
         },
+        {
+          value: 'PAYSTACK',
+          label: 'Paystack',
+          description: 'Redirect checkout with Paystack.',
+          detail: 'Available for this checkout.',
+          available: true,
+          selected: false,
+          recommended: false,
+          locked: false,
+        },
       ],
     });
 
@@ -417,6 +440,90 @@ describe('CheckoutController', () => {
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('Gateway unavailable'),
+    );
+  });
+
+  it('renders Paystack as the selected hosted checkout rail with the matching CTA and pills', async () => {
+    paymentsService.getHostedCheckoutPageContext.mockResolvedValue({
+      checkoutToken: 'checkout-token-paystack',
+      merchantName: 'Stackaura Labs',
+      reference: 'INV-PAYSTACK-HOSTED',
+      amountCents: 9900,
+      currency: 'ZAR',
+      status: 'CREATED',
+      description: 'Premium infrastructure payment',
+      customerEmail: 'buyer@example.com',
+      expiresAt: new Date('2026-03-19T10:15:00.000Z'),
+      currentGateway: 'PAYSTACK',
+      selectedGateway: 'PAYSTACK',
+      selectionLocked: false,
+      recommendedGateway: 'YOCO',
+      gatewayOptions: [
+        {
+          value: 'AUTO',
+          label: 'Auto',
+          description: 'Let Stackaura pick the best available rail for this payment.',
+          detail: 'Stackaura will start with Yoco.',
+          available: true,
+          selected: false,
+          recommended: true,
+          locked: false,
+        },
+        {
+          value: 'YOCO',
+          label: 'Yoco',
+          description: 'Fast card checkout with Yoco.',
+          detail: 'Available for this checkout.',
+          available: true,
+          selected: false,
+          recommended: true,
+          locked: false,
+        },
+        {
+          value: 'OZOW',
+          label: 'Ozow',
+          description: 'Instant EFT checkout with Ozow.',
+          detail: 'Available for this checkout.',
+          available: true,
+          selected: false,
+          recommended: false,
+          locked: false,
+        },
+        {
+          value: 'PAYSTACK',
+          label: 'Paystack',
+          description: 'Redirect checkout with Paystack.',
+          detail: 'Available for this checkout.',
+          available: true,
+          selected: true,
+          recommended: false,
+          locked: false,
+        },
+      ],
+    });
+
+    const send = jest.fn();
+    const type = jest.fn().mockReturnValue({ send });
+    const status = jest.fn().mockReturnValue({ type });
+    const res = {
+      status,
+      type,
+      send,
+    } as unknown as Response;
+
+    await controller.getCheckout('checkout-token-paystack', res);
+
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Continue to Paystack'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Current rail <strong>Paystack</strong>'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Selected <strong id="selected-gateway-pill">Paystack</strong>'),
+    );
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('value="PAYSTACK"'),
     );
   });
 
@@ -474,6 +581,30 @@ describe('CheckoutController', () => {
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('form.submit()'),
+    );
+  });
+
+  it('redirects directly for Paystack checkout continuation', async () => {
+    paymentsService.continueHostedCheckout.mockResolvedValue({
+      gateway: 'PAYSTACK',
+      redirectUrl: 'https://checkout.paystack.com/abc123',
+      redirectForm: null,
+    });
+
+    const redirect = jest.fn();
+    const res = {
+      redirect,
+    } as unknown as Response;
+
+    await controller.continueCheckout('checkout-token-3', 'PAYSTACK', res);
+
+    expect(paymentsService.continueHostedCheckout).toHaveBeenCalledWith(
+      'checkout-token-3',
+      'PAYSTACK',
+    );
+    expect(redirect).toHaveBeenCalledWith(
+      302,
+      'https://checkout.paystack.com/abc123',
     );
   });
 });

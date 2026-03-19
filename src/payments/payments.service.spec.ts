@@ -466,6 +466,53 @@ describe('PaymentsService', () => {
     expect(result.synced).toBe(true);
   });
 
+  it('builds hosted checkout context with Paystack as an explicit selectable rail', async () => {
+    prisma.payment.findFirst.mockResolvedValueOnce({
+      id: 'p-hosted-paystack',
+      checkoutToken: 'checkout-token-paystack',
+      merchantId: 'm-1',
+      reference: 'INV-HOSTED-PAYSTACK',
+      amountCents: 9900,
+      currency: 'ZAR',
+      status: 'CREATED',
+      description: 'Hosted checkout payment',
+      customerEmail: 'buyer@example.com',
+      expiresAt: new Date('2026-03-19T10:15:00.000Z'),
+      gateway: null,
+      rawGateway: {
+        routing: {
+          requestedGateway: 'PAYSTACK',
+        },
+      },
+      merchant: {
+        name: 'Stackaura Labs',
+      },
+      attempts: [],
+    });
+    prisma.merchant.findUnique.mockResolvedValueOnce({
+      ...merchantBase,
+      paystackSecretKey: 'sk_test_secret',
+      paystackTestMode: true,
+    });
+
+    const result = await service.getHostedCheckoutPageContext(
+      'checkout-token-paystack',
+    );
+
+    expect(result.selectedGateway).toBe('PAYSTACK');
+    expect(result.selectionLocked).toBe(true);
+    expect(result.gatewayOptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: 'PAYSTACK',
+          label: 'Paystack',
+          available: true,
+          selected: true,
+        }),
+      ]),
+    );
+  });
+
   it('reconciles Yoco webhook-derived success state to PAID', async () => {
     fetchMock.mockResolvedValue({
       ok: true,
