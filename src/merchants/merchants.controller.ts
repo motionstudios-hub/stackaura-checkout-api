@@ -118,16 +118,15 @@ export class MerchantsController {
   }
 
   // GET /v1/merchants/:merchantId/gateways/ozow
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Get merchant Ozow connection state' })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Get(':merchantId/gateways/ozow')
   async getOzowGatewayConnection(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.getOzowGatewayConnection(merchantId);
     } catch (error) {
       this.logGatewayControllerError({
@@ -142,7 +141,6 @@ export class MerchantsController {
   }
 
   // POST /v1/merchants/:merchantId/gateways/ozow
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Configure merchant Ozow credentials' })
   @ApiBody({
     schema: {
@@ -156,10 +154,10 @@ export class MerchantsController {
       required: ['siteCode', 'privateKey'],
     },
   })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Post(':merchantId/gateways/ozow')
   async configureOzowGateway(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
     @Body()
     body: {
@@ -170,7 +168,7 @@ export class MerchantsController {
     },
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.configureOzowGateway(merchantId, body);
     } catch (error) {
       this.logGatewayControllerError({
@@ -185,16 +183,15 @@ export class MerchantsController {
   }
 
   // GET /v1/merchants/:merchantId/gateways/yoco
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Get merchant Yoco connection state' })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Get(':merchantId/gateways/yoco')
   async getYocoGatewayConnection(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.getYocoGatewayConnection(merchantId);
     } catch (error) {
       this.logGatewayControllerError({
@@ -209,7 +206,6 @@ export class MerchantsController {
   }
 
   // POST /v1/merchants/:merchantId/gateways/yoco
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Configure merchant Yoco credentials' })
   @ApiBody({
     schema: {
@@ -222,10 +218,10 @@ export class MerchantsController {
       required: ['publicKey', 'secretKey', 'testMode'],
     },
   })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Post(':merchantId/gateways/yoco')
   async configureYocoGateway(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
     @Body()
     body: {
@@ -235,7 +231,7 @@ export class MerchantsController {
     },
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.configureYocoGateway(merchantId, body);
     } catch (error) {
       this.logGatewayControllerError({
@@ -250,16 +246,15 @@ export class MerchantsController {
   }
 
   // GET /v1/merchants/:merchantId/gateways/paystack
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Get merchant Paystack connection state' })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Get(':merchantId/gateways/paystack')
   async getPaystackGatewayConnection(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.getPaystackGatewayConnection(merchantId);
     } catch (error) {
       this.logGatewayControllerError({
@@ -274,7 +269,6 @@ export class MerchantsController {
   }
 
   // POST /v1/merchants/:merchantId/gateways/paystack
-  @ApiBearerAuth('bearer')
   @ApiOperation({ summary: 'Configure merchant Paystack credentials' })
   @ApiBody({
     schema: {
@@ -286,10 +280,10 @@ export class MerchantsController {
       required: ['secretKey', 'testMode'],
     },
   })
-  @UseGuards(ApiKeyGuard)
+  @UseGuards(SessionAuthGuard)
   @Post(':merchantId/gateways/paystack')
   async configurePaystackGateway(
-    @Req() req: ApiKeyRequest,
+    @Req() req: SessionRequest,
     @Param('merchantId') merchantId: string,
     @Body()
     body: {
@@ -298,7 +292,7 @@ export class MerchantsController {
     },
   ) {
     try {
-      this.assertMerchantScope(req, merchantId);
+      await this.assertSessionMerchantScope(req, merchantId);
       return this.merchantsService.configurePaystackGateway(merchantId, body);
     } catch (error) {
       this.logGatewayControllerError({

@@ -5,7 +5,6 @@ import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { SessionAuthGuard } from '../auth/session-auth.guard';
 import { MerchantsController } from './merchants.controller';
 import { MerchantsService } from './merchants.service';
-import type { ApiKeyRequest } from '../payouts/api-key.guard';
 
 describe('MerchantsController', () => {
   let controller: MerchantsController;
@@ -196,6 +195,16 @@ describe('MerchantsController', () => {
   });
 
   it('returns Ozow connection state for the authenticated merchant scope', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.getOzowGatewayConnection.mockResolvedValue({
       connected: true,
       siteCodeMasked: 'K20-K20-164',
@@ -206,11 +215,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getOzowGatewayConnection(req, 'm-1'),
+      controller.getOzowGatewayConnection(req as never, 'm-1'),
     ).resolves.toEqual({
       connected: true,
       siteCodeMasked: 'K20-K20-164',
@@ -226,6 +236,16 @@ describe('MerchantsController', () => {
   });
 
   it('configures Ozow including per-merchant test mode', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.configureOzowGateway.mockResolvedValue({
       connected: true,
       siteCodeMasked: 'SC-1',
@@ -236,11 +256,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configureOzowGateway(req, 'm-1', {
+      controller.configureOzowGateway(req as never, 'm-1', {
         siteCode: 'SC-1',
         privateKey: 'private-key',
         apiKey: 'api-key',
@@ -263,23 +284,47 @@ describe('MerchantsController', () => {
     });
   });
 
-  it('rejects Ozow GET when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Ozow GET when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getOzowGatewayConnection(req, 'm-1'),
+      controller.getOzowGatewayConnection(req as never, 'm-1'),
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  it('rejects Ozow POST when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Ozow POST when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configureOzowGateway(req, 'm-1', {
+      controller.configureOzowGateway(req as never, 'm-1', {
         siteCode: 'SC-1',
         privateKey: 'private-key',
       }),
@@ -287,6 +332,16 @@ describe('MerchantsController', () => {
   });
 
   it('returns Yoco connection state for the authenticated merchant scope', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.getYocoGatewayConnection.mockResolvedValue({
       connected: true,
       hasPublicKey: true,
@@ -296,11 +351,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getYocoGatewayConnection(req, 'm-1'),
+      controller.getYocoGatewayConnection(req as never, 'm-1'),
     ).resolves.toEqual({
       connected: true,
       hasPublicKey: true,
@@ -315,6 +371,16 @@ describe('MerchantsController', () => {
   });
 
   it('configures Yoco credentials including per-merchant test mode', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.configureYocoGateway.mockResolvedValue({
       connected: true,
       hasPublicKey: true,
@@ -324,11 +390,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configureYocoGateway(req, 'm-1', {
+      controller.configureYocoGateway(req as never, 'm-1', {
         publicKey: 'pk_live_public',
         secretKey: 'sk_live_secret',
         testMode: false,
@@ -348,23 +415,47 @@ describe('MerchantsController', () => {
     });
   });
 
-  it('rejects Yoco GET when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Yoco GET when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getYocoGatewayConnection(req, 'm-1'),
+      controller.getYocoGatewayConnection(req as never, 'm-1'),
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  it('rejects Yoco POST when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Yoco POST when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configureYocoGateway(req, 'm-1', {
+      controller.configureYocoGateway(req as never, 'm-1', {
         publicKey: 'pk_test_public',
         secretKey: 'sk_test_secret',
         testMode: true,
@@ -373,6 +464,16 @@ describe('MerchantsController', () => {
   });
 
   it('returns Paystack connection state for the authenticated merchant scope', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.getPaystackGatewayConnection.mockResolvedValue({
       connected: true,
       hasSecretKey: true,
@@ -381,11 +482,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getPaystackGatewayConnection(req, 'm-1'),
+      controller.getPaystackGatewayConnection(req as never, 'm-1'),
     ).resolves.toEqual({
       connected: true,
       hasSecretKey: true,
@@ -399,6 +501,16 @@ describe('MerchantsController', () => {
   });
 
   it('configures Paystack credentials including per-merchant test mode', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
     merchantsService.configurePaystackGateway.mockResolvedValue({
       connected: true,
       hasSecretKey: true,
@@ -407,11 +519,12 @@ describe('MerchantsController', () => {
     });
 
     const req = {
-      apiKeyAuth: { merchantId: 'm-1' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configurePaystackGateway(req, 'm-1', {
+      controller.configurePaystackGateway(req as never, 'm-1', {
         secretKey: 'sk_live_secret',
         testMode: false,
       }),
@@ -431,23 +544,47 @@ describe('MerchantsController', () => {
     );
   });
 
-  it('rejects Paystack GET when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Paystack GET when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.getPaystackGatewayConnection(req, 'm-1'),
+      controller.getPaystackGatewayConnection(req as never, 'm-1'),
     ).rejects.toThrow(UnauthorizedException);
   });
 
-  it('rejects Paystack POST when API key merchant scope mismatches path merchant', async () => {
+  it('rejects Paystack POST when the session lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
     const req = {
-      apiKeyAuth: { merchantId: 'm-2' },
-    } as unknown as ApiKeyRequest;
+      cookies: { stackaura_session: 'session-token' },
+      headers: {},
+    };
 
     await expect(
-      controller.configurePaystackGateway(req, 'm-1', {
+      controller.configurePaystackGateway(req as never, 'm-1', {
         secretKey: 'sk_test_secret',
         testMode: true,
       }),
