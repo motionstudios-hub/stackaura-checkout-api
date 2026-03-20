@@ -69,7 +69,7 @@ export class AuthService {
 
     const user = await this.prisma.user.findUnique({
       where: { email },
-      select: { id: true, email: true, passwordHash: true },
+      select: { id: true, email: true, passwordHash: true, isActive: true },
     });
 
     if (!user?.passwordHash) {
@@ -79,6 +79,10 @@ export class AuthService {
     const ok = await argon2.verify(user.passwordHash, password);
     if (!ok) {
       throw new UnauthorizedException('Invalid credentials');
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('Account not active. Complete signup to continue.');
     }
 
     const expiresAt = Date.now() + this.ttlMs;

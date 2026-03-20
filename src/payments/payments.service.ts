@@ -2848,6 +2848,18 @@ export class PaymentsService {
       merchantActivated = true;
     }
 
+    await this.prisma.user.updateMany({
+      where: {
+        isActive: false,
+        memberships: {
+          some: {
+            merchantId: payment.merchantId,
+          },
+        },
+      },
+      data: { isActive: true },
+    });
+
     const fulfilledAt = new Date().toISOString();
     await this.prisma.payment.update({
       where: { id: payment.id },

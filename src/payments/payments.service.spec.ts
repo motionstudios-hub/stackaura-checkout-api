@@ -15,6 +15,7 @@ describe('PaymentsService', () => {
   let fetchMock: jest.Mock;
   let prisma: {
     merchant: { findUnique: jest.Mock; update: jest.Mock };
+    user: { updateMany: jest.Mock };
     payment: {
       findFirst: jest.Mock;
       findUnique: jest.Mock;
@@ -79,6 +80,7 @@ describe('PaymentsService', () => {
     (global as { fetch?: jest.Mock }).fetch = fetchMock;
     prisma = {
       merchant: { findUnique: jest.fn(), update: jest.fn() },
+      user: { updateMany: jest.fn() },
       payment: {
         findFirst: jest.fn(),
         findUnique: jest.fn(),
@@ -122,6 +124,7 @@ describe('PaymentsService', () => {
     prisma.paymentAttempt.updateMany.mockResolvedValue({ count: 0 });
     prisma.payment.update.mockResolvedValue({ id: 'p-1' });
     prisma.merchant.update.mockResolvedValue({ id: 'm-1' });
+    prisma.user.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -1427,6 +1430,17 @@ describe('PaymentsService', () => {
         data: { isActive: true },
       }),
     );
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({
+      where: {
+        isActive: false,
+        memberships: {
+          some: {
+            merchantId: 'm-signup',
+          },
+        },
+      },
+      data: { isActive: true },
+    });
     expect(prisma.payment.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'p-signup-paid' },
@@ -1479,6 +1493,7 @@ describe('PaymentsService', () => {
 
     expect(merchantsService.ensureInitialApiKey).not.toHaveBeenCalled();
     expect(prisma.merchant.update).not.toHaveBeenCalled();
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
     expect(prisma.payment.update).not.toHaveBeenCalled();
     expect(result).toEqual(
       expect.objectContaining({

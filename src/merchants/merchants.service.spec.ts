@@ -21,7 +21,17 @@ describe('MerchantsService', () => {
         create: jest.fn(),
         update: jest.fn(),
       },
+      user: {
+        findUnique: jest.fn(),
+        create: jest.fn(),
+      },
+      membership: {
+        create: jest.fn(),
+      },
       apiKey: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
+      $transaction: jest.fn((callback: (tx: typeof prisma) => unknown) =>
+        callback(prisma),
+      ),
     };
     yocoGateway = {
       resolveWebhookUrl: jest
@@ -316,6 +326,7 @@ describe('MerchantsService', () => {
   it('assigns the default merchant plan during pending signup onboarding', async () => {
     process.env.STACKAURA_DEFAULT_MERCHANT_PLAN = 'starter';
     (prisma.merchant.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
     (prisma.merchant.create as jest.Mock).mockResolvedValue({
       id: 'm-1',
       name: 'Starter Merchant',
@@ -325,6 +336,12 @@ describe('MerchantsService', () => {
       createdAt: new Date('2026-03-20T00:00:00.000Z'),
       updatedAt: new Date('2026-03-20T00:00:00.000Z'),
     });
+    (prisma.user.create as jest.Mock).mockResolvedValue({
+      id: 'u-1',
+      email: 'owner@example.com',
+      isActive: false,
+    });
+    (prisma.membership.create as jest.Mock).mockResolvedValue({ id: 'mem-1' });
 
     await expect(
       service.createPendingMerchantSignup({
@@ -354,6 +371,85 @@ describe('MerchantsService', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           planCode: 'starter',
+        }),
+      }),
+    );
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'owner@example.com',
+          isActive: false,
+          passwordHash: expect.any(String),
+        }),
+      }),
+    );
+    expect(prisma.membership.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          userId: 'u-1',
+          merchantId: 'm-1',
+          role: 'OWNER',
+        },
+      }),
+    );
+  });
+
+  it('creates a loginable owner user and api key during direct merchant signup', async () => {
+    (prisma.merchant.findFirst as jest.Mock).mockResolvedValue(null);
+    (prisma.user.findUnique as jest.Mock).mockResolvedValue(null);
+    (prisma.merchant.create as jest.Mock).mockResolvedValue({
+      id: 'm-direct',
+      name: 'Direct Merchant',
+      email: 'owner@example.com',
+      isActive: true,
+      planCode: 'growth',
+      createdAt: new Date('2026-03-20T00:00:00.000Z'),
+      updatedAt: new Date('2026-03-20T00:00:00.000Z'),
+    });
+    (prisma.user.create as jest.Mock).mockResolvedValue({
+      id: 'u-direct',
+      email: 'owner@example.com',
+      isActive: true,
+    });
+    (prisma.membership.create as jest.Mock).mockResolvedValue({ id: 'mem-direct' });
+    (prisma.apiKey.create as jest.Mock).mockResolvedValue({
+      id: 'key-1',
+      label: 'default',
+      prefix: 'ck_test_abcd',
+      last4: '1234',
+    });
+
+    const result = await service.createMerchantAccount({
+      businessName: 'Direct Merchant',
+      email: 'owner@example.com',
+      password: 'password123',
+    });
+
+    expect(prisma.user.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          email: 'owner@example.com',
+          isActive: true,
+          passwordHash: expect.any(String),
+        }),
+      }),
+    );
+    expect(prisma.membership.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: {
+          userId: 'u-direct',
+          merchantId: 'm-direct',
+          role: 'OWNER',
+        },
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        apiKey: expect.stringMatching(/^ck_test_/),
+        apiKeyId: 'key-1',
+        merchant: expect.objectContaining({
+          id: 'm-direct',
+          email: 'owner@example.com',
         }),
       }),
     );

@@ -22,6 +22,7 @@ import {
   resolveMerchantPlan,
 } from '../payments/monetization.config';
 import { PrismaService } from '../prisma/prisma.service';
+import * as argon2 from 'argon2';
 import crypto from 'crypto';
 
 @Injectable()
@@ -93,7 +94,7 @@ export class MerchantsService {
     merchantId: string;
     label: string;
     environment?: 'test' | 'live';
-  }) {
+  }, client: PrismaService | Prisma.TransactionClient = this.prisma) {
     const normalizedEnv = this.normalizeApiKeyEnvironment(args.environment);
     const keyPrefix = normalizedEnv === 'live' ? 'ck_live' : 'ck_test';
     const apiKeyPlain = this.generateApiKey(keyPrefix);
@@ -101,7 +102,7 @@ export class MerchantsService {
     const storedPrefix = apiKeyPlain.slice(0, 12);
     const last4 = apiKeyPlain.slice(-4);
 
-    const created = await this.prisma.apiKey.create({
+    const created = await client.apiKey.create({
       data: {
         merchantId: args.merchantId,
         keyHash,
@@ -142,12 +143,14 @@ export class MerchantsService {
     },
   ) {
     const { businessName, email, password } = body;
+    const normalizedEmail = email?.trim().toLowerCase();
+    const normalizedBusinessName = businessName?.trim();
 
-    if (!businessName?.trim()) {
+    if (!normalizedBusinessName) {
       throw new BadRequestException('businessName is required');
     }
 
-    if (!email?.trim()) {
+    if (!normalizedEmail) {
       throw new BadRequestException('email is required');
     }
 
@@ -155,47 +158,87 @@ export class MerchantsService {
       throw new BadRequestException('password must be at least 6 characters');
     }
 
-    const existing = await this.prisma.merchant.findFirst({
-      where: { email: email.toLowerCase() },
+    const existingMerchant = await this.prisma.merchant.findFirst({
+      where: { email: normalizedEmail },
       select: { id: true },
     });
 
-    if (existing) {
-      throw new BadRequestException('Merchant with this email already exists');
+    if (existingMerchant) {
+      throw new BadRequestException('Account with this email already exists');
     }
 
-    const merchant = await this.prisma.merchant.create({
-      data: {
-        name: businessName,
-        email: email.toLowerCase(),
-        isActive: options.isActive,
-        planCode: resolveDefaultMerchantPlanCode(),
+    const existingUser = await this.prisma.user.findUnique({
+      where: { email: normalizedEmail },
+      select: { id: true },
+    });
+
+    if (existingUser) {
+      throw new BadRequestException('Account with this email already exists');
+    }
+
+    const passwordHash = await argon2.hash(password);
+
+    const { merchant, apiKey, apiKeyId } = await this.prisma.$transaction(
+      async (tx) => {
+        const merchant = await tx.merchant.create({
+          data: {
+            name: normalizedBusinessName,
+            email: normalizedEmail,
+            isActive: options.isActive,
+            planCode: resolveDefaultMerchantPlanCode(),
+          },
+        });
+
+        const user = await tx.user.create({
+          data: {
+            email: normalizedEmail,
+            passwordHash,
+            isActive: options.isActive,
+          },
+          select: { id: true },
+        });
+
+        await tx.membership.create({
+          data: {
+            userId: user.id,
+            merchantId: merchant.id,
+            role: 'OWNER',
+          },
+          select: { id: true },
+        });
+
+        if (!options.issueApiKey) {
+          return {
+            merchant,
+            apiKey: null,
+            apiKeyId: undefined,
+          };
+        }
+
+        const createdApiKey = await this.createApiKeyRecord(
+          {
+            merchantId: merchant.id,
+            label: options.apiKeyLabel ?? 'default',
+            environment: options.environment,
+          },
+          tx,
+        );
+
+        return {
+          merchant,
+          apiKey: createdApiKey.apiKey,
+          apiKeyId: createdApiKey.apiKeyId,
+        };
       },
-    });
-
-    if (!options.issueApiKey) {
-      return {
-        merchant: {
-          ...merchant,
-          ...this.buildMerchantPlanReadback(merchant.planCode),
-        },
-        apiKey: null,
-      };
-    }
-
-    const apiKey = await this.createApiKeyRecord({
-      merchantId: merchant.id,
-      label: options.apiKeyLabel ?? 'default',
-      environment: options.environment,
-    });
+    );
 
     return {
       merchant: {
         ...merchant,
         ...this.buildMerchantPlanReadback(merchant.planCode),
       },
-      apiKey: apiKey.apiKey,
-      apiKeyId: apiKey.apiKeyId,
+      apiKey,
+      apiKeyId,
     };
   }
 
