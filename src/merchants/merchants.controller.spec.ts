@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { UnauthorizedException } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { MerchantsController } from './merchants.controller';
 import { MerchantsService } from './merchants.service';
@@ -8,6 +9,7 @@ import type { ApiKeyRequest } from '../payouts/api-key.guard';
 describe('MerchantsController', () => {
   let controller: MerchantsController;
   let merchantsService: {
+    getMerchantAnalytics: jest.Mock;
     getOzowGatewayConnection: jest.Mock;
     configureOzowGateway: jest.Mock;
     getYocoGatewayConnection: jest.Mock;
@@ -15,9 +17,13 @@ describe('MerchantsController', () => {
     getPaystackGatewayConnection: jest.Mock;
     configurePaystackGateway: jest.Mock;
   };
+  let authService: {
+    resolveSession: jest.Mock;
+  };
 
   beforeEach(async () => {
     merchantsService = {
+      getMerchantAnalytics: jest.fn(),
       getOzowGatewayConnection: jest.fn(),
       configureOzowGateway: jest.fn(),
       getYocoGatewayConnection: jest.fn(),
@@ -25,10 +31,16 @@ describe('MerchantsController', () => {
       getPaystackGatewayConnection: jest.fn(),
       configurePaystackGateway: jest.fn(),
     };
+    authService = {
+      resolveSession: jest.fn(),
+    };
 
     const moduleBuilder = Test.createTestingModule({
       controllers: [MerchantsController],
-      providers: [{ provide: MerchantsService, useValue: merchantsService }],
+      providers: [
+        { provide: MerchantsService, useValue: merchantsService },
+        { provide: AuthService, useValue: authService },
+      ],
     });
     moduleBuilder
       .overrideGuard(ApiKeyGuard)
@@ -41,6 +53,69 @@ describe('MerchantsController', () => {
 
   it('should be defined', () => {
     expect(controller).toBeDefined();
+  });
+
+  it('returns merchant analytics for a signed-in member of that merchant workspace', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-1',
+          role: 'OWNER',
+          merchant: { id: 'm-1', name: 'Merchant One' },
+        },
+      ],
+    });
+    merchantsService.getMerchantAnalytics.mockResolvedValue({
+      merchantId: 'm-1',
+      totalPayments: 1,
+      totalVolumeCents: 5000,
+      successfulPayments: 1,
+      failedPayments: 0,
+      successRate: 100,
+      recoveredPayments: 0,
+      activeGatewaysUsed: 1,
+      gatewayDistribution: [],
+      recentPayments: [],
+      recentRoutingHistory: [],
+    });
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+    };
+
+    await expect(
+      controller.getMerchantAnalytics(req as never, 'm-1'),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        merchantId: 'm-1',
+        totalPayments: 1,
+      }),
+    );
+
+    expect(authService.resolveSession).toHaveBeenCalledWith('session-token');
+    expect(merchantsService.getMerchantAnalytics).toHaveBeenCalledWith('m-1');
+  });
+
+  it('rejects merchant analytics when the signed-in user lacks that merchant membership', async () => {
+    authService.resolveSession.mockResolvedValue({
+      user: { id: 'u-1', email: 'owner@example.com' },
+      memberships: [
+        {
+          id: 'mem-2',
+          role: 'OWNER',
+          merchant: { id: 'm-2', name: 'Merchant Two' },
+        },
+      ],
+    });
+
+    const req = {
+      cookies: { stackaura_session: 'session-token' },
+    };
+
+    await expect(
+      controller.getMerchantAnalytics(req as never, 'm-1'),
+    ).rejects.toThrow(UnauthorizedException);
   });
 
   it('returns Ozow connection state for the authenticated merchant scope', async () => {

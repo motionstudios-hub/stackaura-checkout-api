@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { AuthService } from '../auth/auth.service';
 import type { ApiKeyRequest } from '../payouts/api-key.guard';
 import { ApiKeyGuard } from '../payouts/api-key.guard';
 import { MerchantsService } from './merchants.service';
@@ -19,7 +20,10 @@ import { MerchantsService } from './merchants.service';
 export class MerchantsController {
   private readonly logger = new Logger(MerchantsController.name);
 
-  constructor(private readonly merchantsService: MerchantsService) {}
+  constructor(
+    private readonly merchantsService: MerchantsService,
+    private readonly authService: AuthService,
+  ) {}
 
   @Get()
   async list() {
@@ -38,6 +42,16 @@ export class MerchantsController {
     },
   ) {
     return this.merchantsService.createMerchantAccount(body);
+  }
+
+  @ApiOperation({ summary: 'Get real merchant payment analytics for the dashboard' })
+  @Get(':merchantId/analytics')
+  async getMerchantAnalytics(
+    @Req() req: Request,
+    @Param('merchantId') merchantId: string,
+  ) {
+    await this.assertSessionMerchantScope(req, merchantId);
+    return this.merchantsService.getMerchantAnalytics(merchantId);
   }
 
   // GET /v1/merchants/:merchantId/api-keys
@@ -303,6 +317,26 @@ export class MerchantsController {
     }
     if (authMerchantId !== merchantId) {
       throw new UnauthorizedException('API key not allowed for merchant');
+    }
+  }
+
+  private async assertSessionMerchantScope(req: Request, merchantId: string) {
+    const cookieName = process.env.SESSION_COOKIE_NAME ?? 'stackaura_session';
+    const token = (req as Request & { cookies?: Record<string, string> }).cookies?.[
+      cookieName
+    ];
+    const session = await this.authService.resolveSession(token);
+
+    if (!session) {
+      throw new UnauthorizedException('Not authenticated');
+    }
+
+    const hasMembership = session.memberships.some(
+      (membership) => membership.merchant.id === merchantId,
+    );
+
+    if (!hasMembership) {
+      throw new UnauthorizedException('Merchant access denied');
     }
   }
 

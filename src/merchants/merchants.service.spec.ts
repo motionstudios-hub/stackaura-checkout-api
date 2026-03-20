@@ -28,6 +28,9 @@ describe('MerchantsService', () => {
       membership: {
         create: jest.fn(),
       },
+      payment: {
+        findMany: jest.fn(),
+      },
       apiKey: { create: jest.fn(), findFirst: jest.fn(), update: jest.fn() },
       $transaction: jest.fn((callback: (tx: typeof prisma) => unknown) =>
         callback(prisma),
@@ -451,6 +454,184 @@ describe('MerchantsService', () => {
           id: 'm-direct',
           email: 'owner@example.com',
         }),
+      }),
+    );
+  });
+
+  it('returns zeroed analytics for a merchant with no real payments', async () => {
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([]);
+
+    await expect(service.getMerchantAnalytics('m-empty')).resolves.toEqual(
+      expect.objectContaining({
+        merchantId: 'm-empty',
+        totalPayments: 0,
+        totalVolumeCents: 0,
+        successfulPayments: 0,
+        failedPayments: 0,
+        successRate: 0,
+        recoveredPayments: 0,
+        activeGatewaysUsed: 0,
+        gatewayDistribution: [],
+        recentPayments: [],
+        recentRoutingHistory: [],
+      }),
+    );
+  });
+
+  it('calculates real analytics from merchant payments and excludes signup bootstrap payments', async () => {
+    (prisma.payment.findMany as jest.Mock).mockResolvedValue([
+      {
+        id: 'p-3',
+        reference: 'PAY-3',
+        amountCents: 2000,
+        status: 'PAID',
+        gateway: 'OZOW',
+        createdAt: new Date('2026-03-20T10:00:00.000Z'),
+        rawGateway: {
+          routing: {
+            requestedGateway: 'AUTO',
+            selectionMode: 'auto',
+            fallbackCount: 0,
+          },
+        },
+        attempts: [
+          {
+            id: 'a-3',
+            gateway: 'OZOW',
+            status: 'SUCCEEDED',
+            createdAt: new Date('2026-03-20T10:00:00.000Z'),
+            updatedAt: new Date('2026-03-20T10:01:00.000Z'),
+          },
+        ],
+      },
+      {
+        id: 'p-2',
+        reference: 'PAY-2',
+        amountCents: 1500,
+        status: 'FAILED',
+        gateway: 'PAYSTACK',
+        createdAt: new Date('2026-03-20T09:00:00.000Z'),
+        rawGateway: {
+          routing: {
+            requestedGateway: 'AUTO',
+            selectionMode: 'auto',
+            fallbackCount: 0,
+          },
+        },
+        attempts: [
+          {
+            id: 'a-2',
+            gateway: 'PAYSTACK',
+            status: 'FAILED',
+            createdAt: new Date('2026-03-20T09:00:00.000Z'),
+            updatedAt: new Date('2026-03-20T09:01:00.000Z'),
+          },
+        ],
+      },
+      {
+        id: 'p-1',
+        reference: 'PAY-1',
+        amountCents: 5000,
+        status: 'PAID',
+        gateway: 'YOCO',
+        createdAt: new Date('2026-03-20T08:00:00.000Z'),
+        rawGateway: {
+          routing: {
+            requestedGateway: 'AUTO',
+            selectionMode: 'auto',
+            fallbackCount: 1,
+          },
+        },
+        attempts: [
+          {
+            id: 'a-1a',
+            gateway: 'PAYSTACK',
+            status: 'FAILED',
+            createdAt: new Date('2026-03-20T08:00:00.000Z'),
+            updatedAt: new Date('2026-03-20T08:01:00.000Z'),
+          },
+          {
+            id: 'a-1b',
+            gateway: 'YOCO',
+            status: 'SUCCEEDED',
+            createdAt: new Date('2026-03-20T08:02:00.000Z'),
+            updatedAt: new Date('2026-03-20T08:03:00.000Z'),
+          },
+        ],
+      },
+      {
+        id: 'p-signup',
+        reference: 'SIGNUP-M1',
+        amountCents: 1000,
+        status: 'PAID',
+        gateway: 'OZOW',
+        createdAt: new Date('2026-03-20T07:00:00.000Z'),
+        rawGateway: {
+          publicFlow: {
+            flow: 'merchant_signup',
+          },
+        },
+        attempts: [
+          {
+            id: 'a-signup',
+            gateway: 'OZOW',
+            status: 'SUCCEEDED',
+            createdAt: new Date('2026-03-20T07:00:00.000Z'),
+            updatedAt: new Date('2026-03-20T07:01:00.000Z'),
+          },
+        ],
+      },
+    ]);
+
+    const analytics = await service.getMerchantAnalytics('m-1');
+
+    expect(analytics).toEqual(
+      expect.objectContaining({
+        merchantId: 'm-1',
+        totalPayments: 3,
+        totalVolumeCents: 8500,
+        successfulPayments: 2,
+        failedPayments: 1,
+        successRate: expect.closeTo(66.67, 2),
+        recoveredPayments: 1,
+        activeGatewaysUsed: 3,
+      }),
+    );
+    expect(analytics.gatewayDistribution).toEqual([
+      expect.objectContaining({
+        gateway: 'PAYSTACK',
+        count: 1,
+        volumeCents: 1500,
+      }),
+      expect.objectContaining({
+        gateway: 'YOCO',
+        count: 1,
+        volumeCents: 5000,
+      }),
+      expect.objectContaining({
+        gateway: 'OZOW',
+        count: 1,
+        volumeCents: 2000,
+      }),
+    ]);
+    expect(analytics.recentPayments).toHaveLength(3);
+    expect(analytics.recentPayments[0]).toEqual(
+      expect.objectContaining({
+        reference: 'PAY-3',
+        gateway: 'OZOW',
+      }),
+    );
+    expect(analytics.recentRoutingHistory[0]).toEqual(
+      expect.objectContaining({
+        reference: 'PAY-3',
+        routeSummary: 'AUTO -> Ozow -> SUCCEEDED',
+      }),
+    );
+    expect(analytics.recentRoutingHistory[2]).toEqual(
+      expect.objectContaining({
+        reference: 'PAY-1',
+        routeSummary: 'AUTO -> Paystack -> FAILED -> Yoco -> SUCCEEDED',
+        timelineStages: ['CREATED', 'INITIATED', 'FAILED', 'FALLBACK', 'SUCCEEDED'],
       }),
     );
   });

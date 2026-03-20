@@ -4,7 +4,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { GatewayProvider, PaymentStatus, Prisma } from '@prisma/client';
 import { resolveOzowConfig } from '../gateways/ozow.config';
 import {
   assertPaystackConfigConsistency,
@@ -24,6 +24,25 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import * as argon2 from 'argon2';
 import crypto from 'crypto';
+
+type MerchantAnalyticsAttempt = {
+  id: string;
+  gateway: GatewayProvider;
+  status: string;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+type MerchantAnalyticsPayment = {
+  id: string;
+  reference: string;
+  amountCents: number;
+  status: PaymentStatus;
+  gateway: GatewayProvider | null;
+  createdAt: Date;
+  rawGateway: Prisma.JsonValue | null;
+  attempts: MerchantAnalyticsAttempt[];
+};
 
 @Injectable()
 export class MerchantsService {
@@ -48,6 +67,359 @@ export class MerchantsService {
       this.logPrismaError('merchant.findMany', error);
       throw error;
     }
+  }
+
+  async getMerchantAnalytics(merchantId: string) {
+    const payments = await this.prisma.payment.findMany({
+      where: { merchantId },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        reference: true,
+        amountCents: true,
+        status: true,
+        gateway: true,
+        createdAt: true,
+        rawGateway: true,
+        attempts: {
+          orderBy: { createdAt: 'asc' },
+          select: {
+            id: true,
+            gateway: true,
+            status: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+      },
+    });
+
+    const realPayments = payments.filter(
+      (payment) => !this.isMerchantSignupBootstrapPayment(payment.rawGateway),
+    );
+    const totalPayments = realPayments.length;
+    const totalVolumeCents = realPayments.reduce(
+      (sum, payment) => sum + payment.amountCents,
+      0,
+    );
+    const successfulPayments = realPayments.filter(
+      (payment) => payment.status === PaymentStatus.PAID,
+    ).length;
+    const failedPayments = realPayments.filter(
+      (payment) =>
+        payment.status === PaymentStatus.FAILED ||
+        payment.status === PaymentStatus.CANCELLED,
+    ).length;
+    const terminalPayments = successfulPayments + failedPayments;
+    const successRate =
+      terminalPayments > 0
+        ? Number(((successfulPayments / terminalPayments) * 100).toFixed(2))
+        : 0;
+    const recoveredPayments = realPayments.filter((payment) =>
+      this.paymentWasRecovered(payment),
+    ).length;
+
+    const distribution = new Map<
+      GatewayProvider,
+      { gateway: GatewayProvider; count: number; volumeCents: number }
+    >();
+
+    for (const payment of realPayments) {
+      const resolvedGateway = this.resolveAnalyticsGateway(payment);
+      if (!resolvedGateway) {
+        continue;
+      }
+
+      const current = distribution.get(resolvedGateway) ?? {
+        gateway: resolvedGateway,
+        count: 0,
+        volumeCents: 0,
+      };
+
+      current.count += 1;
+      current.volumeCents += payment.amountCents;
+      distribution.set(resolvedGateway, current);
+    }
+
+    const gatewayDistribution = Array.from(distribution.values())
+      .sort((left, right) => {
+        const orderDelta =
+          this.gatewaySortIndex(left.gateway) - this.gatewaySortIndex(right.gateway);
+        if (orderDelta !== 0) {
+          return orderDelta;
+        }
+        return right.count - left.count;
+      })
+      .map((item) => ({
+        gateway: item.gateway,
+        label: this.formatGatewayLabel(item.gateway),
+        count: item.count,
+        volumeCents: item.volumeCents,
+      }));
+
+    const activeGatewaysUsed = gatewayDistribution.length;
+    const recentPayments = realPayments.slice(0, 5).map((payment) => ({
+      reference: payment.reference,
+      amountCents: payment.amountCents,
+      status: payment.status,
+      gateway: this.resolveAnalyticsGateway(payment),
+      gatewayLabel: this.formatGatewayLabel(this.resolveAnalyticsGateway(payment)),
+      createdAt: payment.createdAt.toISOString(),
+    }));
+
+    const recentRoutingHistory = realPayments
+      .filter((payment) => payment.attempts.length > 0)
+      .slice(0, 5)
+      .map((payment) => {
+        const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
+        const path = this.buildAnalyticsRoutingPath(payment);
+
+        return {
+          reference: payment.reference,
+          amountCents: payment.amountCents,
+          status: payment.status,
+          gateway: this.resolveAnalyticsGateway(payment),
+          gatewayLabel: this.formatGatewayLabel(this.resolveAnalyticsGateway(payment)),
+          createdAt: payment.createdAt.toISOString(),
+          selectionMode: routingMeta.selectionMode,
+          requestedGateway: routingMeta.requestedGateway,
+          fallbackCount: routingMeta.fallbackCount,
+          routeSummary:
+            path.length > 0
+              ? path.map((step) => step.label).join(' -> ')
+              : 'No routing history available',
+          path,
+          timelineStages: this.buildAnalyticsTimelineStages(payment),
+          attempts: payment.attempts.map((attempt) => ({
+            gateway: attempt.gateway,
+            gatewayLabel: this.formatGatewayLabel(attempt.gateway),
+            status: attempt.status,
+            createdAt: attempt.createdAt.toISOString(),
+            updatedAt: attempt.updatedAt.toISOString(),
+          })),
+        };
+      });
+
+    return {
+      merchantId,
+      totalPayments,
+      totalVolumeCents,
+      successfulPayments,
+      failedPayments,
+      successRate,
+      recoveredPayments,
+      activeGatewaysUsed,
+      gatewayDistribution,
+      recentPayments,
+      recentRoutingHistory,
+      metricDefinitions: {
+        successRate:
+          'Calculated as successfulPayments divided by terminal payments, where terminal payments are payments with a final status of PAID, FAILED, or CANCELLED.',
+        recoveredPayments:
+          'Counts PAID payments that have at least one FAILED or CANCELLED payment attempt before the final successful outcome.',
+        gatewayDistribution:
+          'Grouped by the resolved gateway for each real merchant payment. The resolved gateway is the latest attempt gateway when attempts exist, otherwise the payment gateway field.',
+      },
+    };
+  }
+
+  private isMerchantSignupBootstrapPayment(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
+    const root = this.asJsonRecord(rawGateway);
+    const publicFlow = this.asJsonRecord(root?.publicFlow);
+    return publicFlow?.flow === 'merchant_signup';
+  }
+
+  private asJsonRecord(value: unknown) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+
+    return value as Record<string, unknown>;
+  }
+
+  private extractAnalyticsRoutingMeta(rawGateway: Prisma.JsonValue | null | undefined) {
+    const root = this.asJsonRecord(rawGateway);
+    const routing = this.asJsonRecord(root?.routing);
+    const fallbackCount = this.parseAnalyticsCount(routing?.fallbackCount);
+    const selectionMode =
+      typeof routing?.selectionMode === 'string' && routing.selectionMode.trim()
+        ? routing.selectionMode.trim().toLowerCase()
+        : null;
+    const requestedGateway =
+      typeof routing?.requestedGateway === 'string' && routing.requestedGateway.trim()
+        ? routing.requestedGateway.trim().toUpperCase()
+        : null;
+
+    return {
+      fallbackCount,
+      selectionMode,
+      requestedGateway,
+    };
+  }
+
+  private parseAnalyticsCount(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return Math.floor(value);
+    }
+
+    if (typeof value === 'string') {
+      const parsed = Number.parseInt(value, 10);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+
+    return 0;
+  }
+
+  private resolveAnalyticsGateway(payment: MerchantAnalyticsPayment) {
+    const latestAttempt = payment.attempts[payment.attempts.length - 1] ?? null;
+    return latestAttempt?.gateway ?? payment.gateway ?? null;
+  }
+
+  private paymentWasRecovered(payment: MerchantAnalyticsPayment) {
+    if (payment.status !== PaymentStatus.PAID) {
+      return false;
+    }
+
+    const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
+    return (
+      routingMeta.fallbackCount > 0 ||
+      payment.attempts.some(
+        (attempt) =>
+          attempt.status === 'FAILED' || attempt.status === 'CANCELLED',
+      )
+    );
+  }
+
+  private buildAnalyticsRoutingPath(payment: MerchantAnalyticsPayment) {
+    const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
+    const path: Array<{ label: string; kind: 'gateway' | 'event' }> = [];
+    const selectionLabel =
+      routingMeta.selectionMode === 'explicit'
+        ? 'MANUAL'
+        : routingMeta.requestedGateway === 'AUTO' ||
+            routingMeta.selectionMode === 'auto'
+          ? 'AUTO'
+          : null;
+
+    if (selectionLabel) {
+      path.push({ label: selectionLabel, kind: 'event' });
+    }
+
+    for (const attempt of payment.attempts) {
+      path.push({
+        label: this.formatGatewayLabel(attempt.gateway),
+        kind: 'gateway',
+      });
+
+      const statusLabel = this.mapAttemptStatusToRoutingEvent(attempt.status);
+      if (statusLabel) {
+        path.push({ label: statusLabel, kind: 'event' });
+      }
+    }
+
+    if (
+      payment.status === PaymentStatus.PAID &&
+      path[path.length - 1]?.label !== 'SUCCEEDED'
+    ) {
+      path.push({ label: 'SUCCEEDED', kind: 'event' });
+    }
+
+    return path;
+  }
+
+  private buildAnalyticsTimelineStages(payment: MerchantAnalyticsPayment) {
+    const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
+    const stages: Array<'CREATED' | 'INITIATED' | 'FAILED' | 'FALLBACK' | 'SUCCEEDED'> = [
+      'CREATED',
+    ];
+
+    if (payment.attempts.length > 0) {
+      stages.push('INITIATED');
+    }
+
+    if (
+      payment.attempts.some(
+        (attempt) =>
+          attempt.status === 'FAILED' || attempt.status === 'CANCELLED',
+      )
+    ) {
+      stages.push('FAILED');
+    }
+
+    if (payment.attempts.length > 1 || routingMeta.fallbackCount > 0) {
+      stages.push('FALLBACK');
+    }
+
+    if (payment.status === PaymentStatus.PAID) {
+      stages.push('SUCCEEDED');
+    }
+
+    return stages.filter(
+      (stage, index) => stages.indexOf(stage) === index,
+    );
+  }
+
+  private mapAttemptStatusToRoutingEvent(status: string) {
+    const normalized = status.trim().toUpperCase();
+    if (normalized === 'SUCCEEDED') {
+      return 'SUCCEEDED';
+    }
+    if (normalized === 'FAILED') {
+      return 'FAILED';
+    }
+    if (normalized === 'CANCELLED') {
+      return 'CANCELLED';
+    }
+    if (normalized === 'PENDING' || normalized === 'CREATED') {
+      return 'INITIATED';
+    }
+
+    return normalized || null;
+  }
+
+  private gatewaySortIndex(gateway: GatewayProvider) {
+    const order: GatewayProvider[] = [
+      GatewayProvider.PAYSTACK,
+      GatewayProvider.YOCO,
+      GatewayProvider.OZOW,
+      GatewayProvider.PAYFAST,
+      GatewayProvider.PEACH,
+    ];
+
+    const index = order.indexOf(gateway);
+    return index >= 0 ? index : order.length;
+  }
+
+  private formatGatewayLabel(gateway: GatewayProvider | null) {
+    if (!gateway) {
+      return 'Unassigned';
+    }
+
+    if (gateway === GatewayProvider.OZOW) {
+      return 'Ozow';
+    }
+
+    if (gateway === GatewayProvider.YOCO) {
+      return 'Yoco';
+    }
+
+    if (gateway === GatewayProvider.PAYSTACK) {
+      return 'Paystack';
+    }
+
+    if (gateway === GatewayProvider.PAYFAST) {
+      return 'PayFast';
+    }
+
+    if (gateway === GatewayProvider.PEACH) {
+      return 'Peach';
+    }
+
+    return gateway;
   }
 
   private generateApiKey(prefix: 'ck_live' | 'ck_test' = 'ck_test') {
