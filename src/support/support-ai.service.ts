@@ -47,14 +47,21 @@ type TroubleshootingReply = {
 @Injectable()
 export class SupportAiService {
   private readonly logger = new Logger(SupportAiService.name);
+  private readonly versionMarker = 'SUPPORT_AI_VERSION=879c6ea';
 
   async generateReply(args: SupportAiRequest): Promise<SupportAssistantReply> {
     const escalationReason = this.detectEscalationNeed(args.userMessage);
+    const topic = this.detectTopic(args.userMessage);
+    const provider = this.detectProvider(args.userMessage);
     const fallbackReply = this.buildFallbackReply(args, escalationReason);
     const apiKey =
       process.env.SUPPORT_AI_OPENAI_API_KEY?.trim() ||
       process.env.OPENAI_API_KEY?.trim() ||
       '';
+
+    this.logger.log(
+      `${this.versionMarker} merchantId=${args.merchantContext.merchant.id} topic=${topic} provider=${provider ?? 'unknown'} ai=${apiKey ? 'openai' : 'fallback'}`,
+    );
 
     if (!apiKey) {
       return fallbackReply;
