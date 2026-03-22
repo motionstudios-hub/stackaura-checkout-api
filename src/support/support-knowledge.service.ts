@@ -68,6 +68,30 @@ const KNOWLEDGE_BASE: KnowledgeEntry[] = [
       'Hosted checkout and payment links run through Stackaura routing. Explicit gateway choice is respected exactly. Auto routing chooses the best eligible rail and can fallback only before provider checkout meaningfully starts. Once a customer has already been handed to a provider checkout, Stackaura should not silently switch rails.',
   },
   {
+    id: 'gateway-troubleshooting',
+    title: 'Gateway payment troubleshooting',
+    url: '/dashboard/support',
+    source: 'docs',
+    excerpt:
+      'Troubleshoot payment failures by checking gateway credentials, environment mismatches, callback URLs, and recent failed payment attempts before escalating.',
+    keywords: [
+      'why are payments failing',
+      'payment failing',
+      'ozow failing',
+      'yoco failing',
+      'paystack failing',
+      'webhook issue',
+      'callback url',
+      'return url',
+      'test mode',
+      'live mode',
+      'recent failed transactions',
+      'provider-side issue',
+    ],
+    content:
+      'When a gateway payment is failing, Stackaura support should first inspect the merchant-specific context: whether the gateway is fully connected, whether the gateway mode matches the test/live environment, whether recent failed payment attempts exist, and whether routing failed before provider handoff. If configuration looks correct, the next likely checks are callback and return URL alignment, provider request validation, and provider-side rejection or bank-side issues. Dashboard next steps should point the merchant to Gateway Connections, Developer Keys, and recent payment attempts before escalating to human support.',
+  },
+  {
     id: 'merchant-activation',
     title: 'Merchant activation and onboarding',
     url: '/signup',
