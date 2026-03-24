@@ -61,10 +61,16 @@ describe('AdminService', () => {
       {
         id: 'p-1',
         reference: 'PAY-1',
+        baseAmountCents: 5000,
         amountCents: 5000,
+        platformFeeCents: 125,
+        providerFeeCents: null,
+        merchantNetCents: 5000,
         status: PaymentStatus.PAID,
         gateway: GatewayProvider.PAYSTACK,
         createdAt: new Date('2026-03-24T09:00:00.000Z'),
+        updatedAt: new Date('2026-03-24T09:02:00.000Z'),
+        expiresAt: new Date('2026-03-24T09:30:00.000Z'),
         rawGateway: { routing: { fallbackCount: 1 } },
         merchant: { id: 'm-1', name: 'Merchant One' },
         attempts: [
@@ -83,10 +89,16 @@ describe('AdminService', () => {
       {
         id: 'p-2',
         reference: 'PAY-2',
+        baseAmountCents: 2500,
         amountCents: 2500,
+        platformFeeCents: 50,
+        providerFeeCents: null,
+        merchantNetCents: 2500,
         status: PaymentStatus.FAILED,
         gateway: GatewayProvider.OZOW,
         createdAt: new Date('2026-03-23T09:00:00.000Z'),
+        updatedAt: new Date('2026-03-23T09:03:00.000Z'),
+        expiresAt: new Date('2026-03-23T09:30:00.000Z'),
         rawGateway: null,
         merchant: { id: 'm-2', name: 'Merchant Two' },
         attempts: [
@@ -147,6 +159,22 @@ describe('AdminService', () => {
     );
     expect(result.operations.webhookIssues.totalIssues).toBe(3);
     expect(result.operations.support.conversationCount).toBe(4);
+    expect(result.revenue.grossProcessedVolumeCents).toBe(5000);
+    expect(result.revenue.stackauraFeeEarnedCents).toBe(125);
+    expect(result.revenue.providerFeesAvailable).toBe(false);
+    expect(result.funnel.counts.paid).toBe(1);
+    expect(result.gatewayHealth.byGateway).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          gateway: GatewayProvider.YOCO,
+          successRate: 100,
+        }),
+        expect.objectContaining({
+          gateway: GatewayProvider.OZOW,
+          failureRate: 100,
+        }),
+      ]),
+    );
     expect(result.operations.recentIssues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ kind: 'payment_error', title: 'PAY-2' }),

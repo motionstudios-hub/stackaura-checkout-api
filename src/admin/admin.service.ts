@@ -19,10 +19,16 @@ type AdminMerchantRecord = {
 type AdminPaymentRecord = {
   id: string;
   reference: string;
+  baseAmountCents: number;
   amountCents: number;
+  platformFeeCents: number;
+  providerFeeCents: number | null;
+  merchantNetCents: number;
   status: PaymentStatus;
   gateway: GatewayProvider | null;
   createdAt: Date;
+  updatedAt: Date;
+  expiresAt: Date;
   rawGateway: Prisma.JsonValue | null;
   merchant: {
     id: string;
@@ -103,10 +109,16 @@ export class AdminService {
         select: {
           id: true,
           reference: true,
+          baseAmountCents: true,
           amountCents: true,
+          platformFeeCents: true,
+          providerFeeCents: true,
+          merchantNetCents: true,
           status: true,
           gateway: true,
           createdAt: true,
+          updatedAt: true,
+          expiresAt: true,
           rawGateway: true,
           merchant: {
             select: {
@@ -209,15 +221,31 @@ export class AdminService {
       (merchant) => merchant.isActive,
     ).length;
 
-    const successfulPayments = paymentRecords.filter(
+    const paidPayments = paymentRecords.filter(
       (payment) => payment.status === PaymentStatus.PAID,
-    ).length;
-    const failedPayments = paymentRecords.filter(
+    );
+    const successfulPayments = paidPayments.length;
+    const failedOnlyPayments = paymentRecords.filter(
+      (payment) => payment.status === PaymentStatus.FAILED,
+    );
+    const cancelledPayments = paymentRecords.filter(
+      (payment) => payment.status === PaymentStatus.CANCELLED,
+    );
+    const failedPayments = failedOnlyPayments.length;
+    const pendingPayments = paymentRecords.filter(
+      (payment) => payment.status === PaymentStatus.PENDING,
+    );
+    const createdPayments = paymentRecords.filter(
+      (payment) => payment.status === PaymentStatus.CREATED,
+    );
+    const expiredPayments = paymentRecords.filter(
       (payment) =>
-        payment.status === PaymentStatus.FAILED ||
-        payment.status === PaymentStatus.CANCELLED,
-    ).length;
-    const terminalPayments = successfulPayments + failedPayments;
+        (payment.status === PaymentStatus.CREATED ||
+          payment.status === PaymentStatus.PENDING) &&
+        payment.expiresAt < now,
+    );
+    const terminalPayments =
+      successfulPayments + failedPayments + cancelledPayments.length;
     const successRate =
       terminalPayments > 0
         ? Number(((successfulPayments / terminalPayments) * 100).toFixed(2))
@@ -226,6 +254,40 @@ export class AdminService {
       this.paymentUsedFailover(payment),
     ).length;
     const gatewayUsage = this.buildGatewayUsage(paymentRecords);
+    const grossProcessedVolumeCents = paidPayments.reduce(
+      (sum, payment) => sum + payment.amountCents,
+      0,
+    );
+    const stackauraFeeEarnedCents = paidPayments.reduce(
+      (sum, payment) => sum + payment.platformFeeCents,
+      0,
+    );
+    const merchantReceivableVolumeCents = paidPayments.reduce(
+      (sum, payment) => sum + payment.merchantNetCents,
+      0,
+    );
+    const observedProviderFeePayments = paidPayments.filter(
+      (payment) => typeof payment.providerFeeCents === 'number',
+    );
+    const providerFeesObservedCents =
+      observedProviderFeePayments.length > 0
+        ? observedProviderFeePayments.reduce(
+            (sum, payment) => sum + (payment.providerFeeCents ?? 0),
+            0,
+          )
+        : null;
+    const netVolumeAfterProviderFeesCents =
+      providerFeesObservedCents === null
+        ? null
+        : Math.max(
+            0,
+            merchantReceivableVolumeCents - providerFeesObservedCents,
+          );
+    const averageFeePerPaymentCents =
+      successfulPayments > 0
+        ? Math.round(stackauraFeeEarnedCents / successfulPayments)
+        : 0;
+    const reachedPendingCount = paymentRecords.length - createdPayments.length;
 
     return {
       generatedAt: now.toISOString(),
@@ -290,6 +352,91 @@ export class AdminService {
             createdAt: payment.createdAt.toISOString(),
             routeSummary: this.buildRouteSummary(payment),
           })),
+      },
+      revenue: {
+        grossProcessedVolumeCents,
+        stackauraFeeEarnedCents,
+        providerFeesObservedCents,
+        netVolumeAfterProviderFeesCents,
+        averageFeePerPaymentCents,
+        revenueOverTime: this.buildRevenueTrend(
+          paidPayments,
+          thirtyDayStart,
+          now,
+        ),
+        revenueByGateway: this.buildRevenueByGateway(paidPayments),
+        revenueByMerchant: this.buildRevenueByMerchant(paidPayments),
+        recentFeeBearingPayments: paidPayments
+          .filter((payment) => payment.platformFeeCents > 0)
+          .slice(0, 8)
+          .map((payment) => ({
+            reference: payment.reference,
+            merchantId: payment.merchant.id,
+            merchantName: payment.merchant.name,
+            gateway: this.resolveGateway(payment),
+            gatewayLabel: this.formatGatewayLabel(this.resolveGateway(payment)),
+            baseAmountCents: payment.baseAmountCents,
+            amountCents: payment.amountCents,
+            platformFeeCents: payment.platformFeeCents,
+            merchantNetCents: payment.merchantNetCents,
+            createdAt: payment.createdAt.toISOString(),
+          })),
+        providerFeesAvailable: providerFeesObservedCents !== null,
+      },
+      funnel: {
+        counts: {
+          created: createdPayments.length,
+          pending: pendingPayments.length,
+          paid: successfulPayments,
+          failed: failedPayments,
+          cancelled: cancelledPayments.length,
+          expired: expiredPayments.length,
+        },
+        conversion: {
+          createdToPendingPct: this.calculatePercentage(
+            reachedPendingCount,
+            paymentRecords.length,
+          ),
+          pendingToPaidPct: this.calculatePercentage(
+            successfulPayments,
+            reachedPendingCount,
+          ),
+          createdToPaidPct: this.calculatePercentage(
+            successfulPayments,
+            paymentRecords.length,
+          ),
+          pendingToTerminalPct: this.calculatePercentage(
+            successfulPayments + failedPayments + cancelledPayments.length,
+            reachedPendingCount,
+          ),
+        },
+        overTime: this.buildFunnelTrend(paymentRecords, thirtyDayStart, now),
+      },
+      gatewayHealth: {
+        byGateway: this.buildGatewayHealth(paymentRecords),
+        recentIncidents: paymentRecords
+          .filter(
+            (payment) =>
+              payment.status === PaymentStatus.FAILED ||
+              payment.status === PaymentStatus.CANCELLED,
+          )
+          .slice(0, 12)
+          .map((payment) => ({
+            reference: payment.reference,
+            merchantId: payment.merchant.id,
+            merchantName: payment.merchant.name,
+            gateway: this.resolveGateway(payment),
+            gatewayLabel: this.formatGatewayLabel(this.resolveGateway(payment)),
+            status: payment.status,
+            routeSummary: this.buildRouteSummary(payment),
+            createdAt: payment.createdAt.toISOString(),
+          })),
+        dataNotes: {
+          webhookIssuesByGateway:
+            'Not wired yet. Webhook delivery failures are currently stored by endpoint and merchant, not by gateway.',
+          avgResolutionTime:
+            'Derived from payment updatedAt minus payment createdAt for terminal payments.',
+        },
       },
       operations: {
         webhookIssues: {
@@ -432,6 +579,376 @@ export class AdminService {
     }
 
     return series;
+  }
+
+  private calculatePercentage(numerator: number, denominator: number) {
+    if (denominator <= 0) {
+      return 0;
+    }
+
+    return Number(((numerator / denominator) * 100).toFixed(2));
+  }
+
+  private buildRevenueTrend(
+    payments: AdminPaymentRecord[],
+    start: Date,
+    end: Date,
+  ) {
+    const buckets = new Map<
+      string,
+      {
+        date: string;
+        grossVolumeCents: number;
+        stackauraFeeCents: number;
+        merchantReceivableCents: number;
+        providerFeeObservedCents: number | null;
+      }
+    >();
+
+    for (const payment of payments) {
+      if (payment.createdAt < start || payment.createdAt > end) {
+        continue;
+      }
+
+      const key = this.dateKey(payment.createdAt);
+      const bucket = buckets.get(key) ?? {
+        date: key,
+        grossVolumeCents: 0,
+        stackauraFeeCents: 0,
+        merchantReceivableCents: 0,
+        providerFeeObservedCents: null,
+      };
+
+      bucket.grossVolumeCents += payment.amountCents;
+      bucket.stackauraFeeCents += payment.platformFeeCents;
+      bucket.merchantReceivableCents += payment.merchantNetCents;
+      if (typeof payment.providerFeeCents === 'number') {
+        bucket.providerFeeObservedCents =
+          (bucket.providerFeeObservedCents ?? 0) + payment.providerFeeCents;
+      }
+
+      buckets.set(key, bucket);
+    }
+
+    const series: Array<{
+      date: string;
+      grossVolumeCents: number;
+      stackauraFeeCents: number;
+      merchantReceivableCents: number;
+      providerFeeObservedCents: number | null;
+      netVolumeAfterProviderFeesCents: number | null;
+    }> = [];
+    for (
+      let cursor = new Date(start);
+      cursor <= end;
+      cursor = this.addDays(cursor, 1)
+    ) {
+      const key = this.dateKey(cursor);
+      const bucket = buckets.get(key) ?? {
+        date: key,
+        grossVolumeCents: 0,
+        stackauraFeeCents: 0,
+        merchantReceivableCents: 0,
+        providerFeeObservedCents: null,
+      };
+
+      series.push({
+        ...bucket,
+        netVolumeAfterProviderFeesCents:
+          bucket.providerFeeObservedCents === null
+            ? null
+            : Math.max(
+                0,
+                bucket.merchantReceivableCents -
+                  bucket.providerFeeObservedCents,
+              ),
+      });
+    }
+
+    return series;
+  }
+
+  private buildRevenueByGateway(payments: AdminPaymentRecord[]) {
+    const distribution = new Map<
+      GatewayProvider,
+      {
+        gateway: GatewayProvider;
+        label: string;
+        paymentCount: number;
+        grossVolumeCents: number;
+        stackauraFeeCents: number;
+        providerFeeObservedCents: number | null;
+        merchantReceivableCents: number;
+      }
+    >();
+
+    for (const payment of payments) {
+      const gateway = this.resolveGateway(payment);
+      if (!gateway) {
+        continue;
+      }
+
+      const current = distribution.get(gateway) ?? {
+        gateway,
+        label: this.formatGatewayLabel(gateway),
+        paymentCount: 0,
+        grossVolumeCents: 0,
+        stackauraFeeCents: 0,
+        providerFeeObservedCents: null,
+        merchantReceivableCents: 0,
+      };
+
+      current.paymentCount += 1;
+      current.grossVolumeCents += payment.amountCents;
+      current.stackauraFeeCents += payment.platformFeeCents;
+      current.merchantReceivableCents += payment.merchantNetCents;
+      if (typeof payment.providerFeeCents === 'number') {
+        current.providerFeeObservedCents =
+          (current.providerFeeObservedCents ?? 0) + payment.providerFeeCents;
+      }
+
+      distribution.set(gateway, current);
+    }
+
+    return Array.from(distribution.values()).sort(
+      (left, right) => right.grossVolumeCents - left.grossVolumeCents,
+    );
+  }
+
+  private buildRevenueByMerchant(payments: AdminPaymentRecord[]) {
+    const distribution = new Map<
+      string,
+      {
+        merchantId: string;
+        merchantName: string;
+        paymentCount: number;
+        grossVolumeCents: number;
+        stackauraFeeCents: number;
+        providerFeeObservedCents: number | null;
+        merchantReceivableCents: number;
+      }
+    >();
+
+    for (const payment of payments) {
+      const current = distribution.get(payment.merchant.id) ?? {
+        merchantId: payment.merchant.id,
+        merchantName: payment.merchant.name,
+        paymentCount: 0,
+        grossVolumeCents: 0,
+        stackauraFeeCents: 0,
+        providerFeeObservedCents: null,
+        merchantReceivableCents: 0,
+      };
+
+      current.paymentCount += 1;
+      current.grossVolumeCents += payment.amountCents;
+      current.stackauraFeeCents += payment.platformFeeCents;
+      current.merchantReceivableCents += payment.merchantNetCents;
+      if (typeof payment.providerFeeCents === 'number') {
+        current.providerFeeObservedCents =
+          (current.providerFeeObservedCents ?? 0) + payment.providerFeeCents;
+      }
+
+      distribution.set(payment.merchant.id, current);
+    }
+
+    return Array.from(distribution.values()).sort(
+      (left, right) => right.grossVolumeCents - left.grossVolumeCents,
+    );
+  }
+
+  private buildFunnelTrend(
+    payments: AdminPaymentRecord[],
+    start: Date,
+    end: Date,
+  ) {
+    const counts = new Map<
+      string,
+      {
+        date: string;
+        created: number;
+        pending: number;
+        paid: number;
+        failed: number;
+        cancelled: number;
+        expired: number;
+      }
+    >();
+
+    for (const payment of payments) {
+      if (payment.createdAt < start || payment.createdAt > end) {
+        continue;
+      }
+
+      const key = this.dateKey(payment.createdAt);
+      const bucket = counts.get(key) ?? {
+        date: key,
+        created: 0,
+        pending: 0,
+        paid: 0,
+        failed: 0,
+        cancelled: 0,
+        expired: 0,
+      };
+
+      if (payment.status === PaymentStatus.CREATED) {
+        bucket.created += 1;
+      } else if (payment.status === PaymentStatus.PENDING) {
+        bucket.pending += 1;
+        if (payment.expiresAt < new Date()) {
+          bucket.expired += 1;
+        }
+      } else if (payment.status === PaymentStatus.PAID) {
+        bucket.paid += 1;
+      } else if (payment.status === PaymentStatus.FAILED) {
+        bucket.failed += 1;
+      } else if (payment.status === PaymentStatus.CANCELLED) {
+        bucket.cancelled += 1;
+      }
+
+      counts.set(key, bucket);
+    }
+
+    const series: Array<{
+      date: string;
+      created: number;
+      pending: number;
+      paid: number;
+      failed: number;
+      cancelled: number;
+      expired: number;
+    }> = [];
+    for (
+      let cursor = new Date(start);
+      cursor <= end;
+      cursor = this.addDays(cursor, 1)
+    ) {
+      const key = this.dateKey(cursor);
+      series.push(
+        counts.get(key) ?? {
+          date: key,
+          created: 0,
+          pending: 0,
+          paid: 0,
+          failed: 0,
+          cancelled: 0,
+          expired: 0,
+        },
+      );
+    }
+
+    return series;
+  }
+
+  private buildGatewayHealth(payments: AdminPaymentRecord[]) {
+    const buckets = new Map<
+      GatewayProvider,
+      {
+        gateway: GatewayProvider;
+        label: string;
+        totalPayments: number;
+        paid: number;
+        failed: number;
+        cancelled: number;
+        failoverCount: number;
+        resolutionMinutesSum: number;
+        resolutionSampleCount: number;
+        latestFailingReferences: Array<{
+          reference: string;
+          status: string;
+          createdAt: string;
+        }>;
+      }
+    >();
+
+    for (const payment of payments) {
+      const gateway = this.resolveGateway(payment);
+      if (!gateway) {
+        continue;
+      }
+
+      const current = buckets.get(gateway) ?? {
+        gateway,
+        label: this.formatGatewayLabel(gateway),
+        totalPayments: 0,
+        paid: 0,
+        failed: 0,
+        cancelled: 0,
+        failoverCount: 0,
+        resolutionMinutesSum: 0,
+        resolutionSampleCount: 0,
+        latestFailingReferences: [],
+      };
+
+      current.totalPayments += 1;
+      if (payment.status === PaymentStatus.PAID) {
+        current.paid += 1;
+      }
+      if (payment.status === PaymentStatus.FAILED) {
+        current.failed += 1;
+      }
+      if (payment.status === PaymentStatus.CANCELLED) {
+        current.cancelled += 1;
+      }
+      if (this.paymentUsedFailover(payment)) {
+        current.failoverCount += 1;
+      }
+      if (
+        payment.status === PaymentStatus.PAID ||
+        payment.status === PaymentStatus.FAILED ||
+        payment.status === PaymentStatus.CANCELLED
+      ) {
+        current.resolutionMinutesSum += Math.max(
+          0,
+          (payment.updatedAt.getTime() - payment.createdAt.getTime()) / 60000,
+        );
+        current.resolutionSampleCount += 1;
+      }
+      if (
+        (payment.status === PaymentStatus.FAILED ||
+          payment.status === PaymentStatus.CANCELLED) &&
+        current.latestFailingReferences.length < 5
+      ) {
+        current.latestFailingReferences.push({
+          reference: payment.reference,
+          status: payment.status,
+          createdAt: payment.createdAt.toISOString(),
+        });
+      }
+
+      buckets.set(gateway, current);
+    }
+
+    return Array.from(buckets.values())
+      .map((bucket) => ({
+        gateway: bucket.gateway,
+        label: bucket.label,
+        totalPayments: bucket.totalPayments,
+        successRate: this.calculatePercentage(
+          bucket.paid,
+          bucket.totalPayments,
+        ),
+        failureRate: this.calculatePercentage(
+          bucket.failed,
+          bucket.totalPayments,
+        ),
+        cancelRate: this.calculatePercentage(
+          bucket.cancelled,
+          bucket.totalPayments,
+        ),
+        failoverCount: bucket.failoverCount,
+        webhookIssueCount: null as number | null,
+        avgResolutionMinutes:
+          bucket.resolutionSampleCount > 0
+            ? Number(
+                (
+                  bucket.resolutionMinutesSum / bucket.resolutionSampleCount
+                ).toFixed(2),
+              )
+            : null,
+        latestFailingReferences: bucket.latestFailingReferences,
+      }))
+      .sort((left, right) => right.totalPayments - left.totalPayments);
   }
 
   private buildGatewayUsage(payments: AdminPaymentRecord[]) {

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   NotFoundException,
   Param,
   Post,
@@ -64,15 +65,16 @@ export class CheckoutController {
   async getCheckout(
     @Param('checkoutToken') checkoutToken: string,
     @Res() res: Response,
+    @Headers('accept') acceptHeader?: string,
   ) {
-    const checkout = await this.paymentsService.getHostedCheckoutPageContext(
-      checkoutToken,
-    );
+    const checkout =
+      await this.paymentsService.getHostedCheckoutPageContext(checkoutToken);
 
-    return res
-      .status(200)
-      .type('html')
-      .send(this.renderCheckoutPage(checkout));
+    if (acceptHeader?.includes('application/json')) {
+      return res.status(200).json(checkout);
+    }
+
+    return res.status(200).type('html').send(this.renderCheckoutPage(checkout));
   }
 
   @Post(':checkoutToken/continue')
@@ -260,7 +262,12 @@ export class CheckoutController {
     checkoutToken: string;
     merchantName: string;
     reference: string;
+    baseAmountCents: number;
     amountCents: number;
+    chargeAmountCents: number;
+    platformFeeCents: number;
+    providerFeeCents: number | null;
+    merchantNetCents: number;
     currency: string;
     status: string;
     description: string | null;
@@ -280,14 +287,20 @@ export class CheckoutController {
       recommended: boolean;
       locked: boolean;
     }>;
+    redirectUrl?: string | null;
+    redirectForm?: GatewayRedirectForm | null;
+    redirectMethod?: string | null;
   }) {
-    const amount = this.formatMoney(args.amountCents, args.currency);
+    const totalAmount = this.formatMoney(args.amountCents, args.currency);
+    const baseAmount = this.formatMoney(args.baseAmountCents, args.currency);
+    const platformFee = this.formatMoney(args.platformFeeCents, args.currency);
     const expiresAt = new Date(args.expiresAt).toLocaleString();
     const expiresAtIso = new Date(args.expiresAt).toISOString();
     const description =
       args.description ?? 'Secure payment powered by Stackaura.';
     const customer = args.customerEmail ?? 'Not provided';
-    const currentGateway = args.currentGateway ?? args.recommendedGateway ?? 'STACKAURA';
+    const currentGateway =
+      args.currentGateway ?? args.recommendedGateway ?? 'STACKAURA';
     const gatewayLabel = this.formatDisplayToken(currentGateway);
     const selectedGatewayLabel = this.formatDisplayToken(args.selectedGateway);
     const statusLabel = this.formatDisplayToken(args.status);
@@ -303,7 +316,9 @@ export class CheckoutController {
       args.selectedGateway === 'AUTO'
         ? 'Continue with Auto'
         : `Continue to ${selectedGatewayLabel}`;
-    const selectedOption = args.gatewayOptions.find((option) => option.selected);
+    const selectedOption = args.gatewayOptions.find(
+      (option) => option.selected,
+    );
     const submitDisabled = !selectedOption?.available;
     const submitLabel = submitDisabled ? 'Gateway unavailable' : ctaLabel;
     const gatewayOptions = args.gatewayOptions
@@ -931,7 +946,7 @@ export class CheckoutController {
           <div class="summary-topline">
             <div>
               <div class="eyebrow">Paying ${this.escapeHtml(args.merchantName)}</div>
-              <div class="amount">${this.escapeHtml(amount)}</div>
+              <div class="amount">${this.escapeHtml(totalAmount)}</div>
             </div>
             <div class="summary-accent">
               <div class="summary-accent-label">Reference</div>
@@ -957,6 +972,18 @@ export class CheckoutController {
             <div class="row">
               <span>Customer</span>
               <strong>${this.escapeHtml(customer)}</strong>
+            </div>
+            <div class="row">
+              <span>Base amount</span>
+              <strong>${this.escapeHtml(baseAmount)}</strong>
+            </div>
+            <div class="row">
+              <span>Stackaura fee</span>
+              <strong>${this.escapeHtml(platformFee)}</strong>
+            </div>
+            <div class="row">
+              <span>Total charged</span>
+              <strong>${this.escapeHtml(totalAmount)}</strong>
             </div>
             <div class="row">
               <span>Expires</span>
@@ -995,6 +1022,18 @@ export class CheckoutController {
             <div class="support-row">
               <span>Status</span>
               <strong>${this.escapeHtml(statusLabel)}</strong>
+            </div>
+            <div class="support-row">
+              <span>Base amount</span>
+              <strong>${this.escapeHtml(baseAmount)}</strong>
+            </div>
+            <div class="support-row">
+              <span>Stackaura fee</span>
+              <strong>${this.escapeHtml(platformFee)}</strong>
+            </div>
+            <div class="support-row">
+              <span>Total charged</span>
+              <strong>${this.escapeHtml(totalAmount)}</strong>
             </div>
             <div class="support-row">
               <span>Customer</span>

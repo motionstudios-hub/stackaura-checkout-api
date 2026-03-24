@@ -251,12 +251,13 @@ export class PaymentsService {
     });
   }
 
-
   private intentReferenceFromId(intentId: string) {
     return `pi_${intentId.replace(/-/g, '').slice(0, 24)}`;
   }
 
-  private toIntentAttemptSummaries(attempts: IntentAttemptRecord[] | undefined) {
+  private toIntentAttemptSummaries(
+    attempts: IntentAttemptRecord[] | undefined,
+  ) {
     return (attempts ?? []).map((attempt) => ({
       id: attempt.id,
       gateway: attempt.gateway,
@@ -287,7 +288,8 @@ export class PaymentsService {
         ? record.action.trim()
         : null;
     const method =
-      typeof record.method === 'string' && record.method.trim().toUpperCase() === 'POST'
+      typeof record.method === 'string' &&
+      record.method.trim().toUpperCase() === 'POST'
         ? 'POST'
         : null;
     const fieldsRecord = this.asRecord(record.fields);
@@ -500,14 +502,13 @@ export class PaymentsService {
       explicitSelection:
         requestedGateway !== null && requestedGateway !== 'AUTO',
       fallbackCount,
-      handoffStarted:
-        Boolean(
-          (typeof requestRecord?.redirectUrl === 'string' &&
-            requestRecord.redirectUrl.trim()) ||
-            this.parseRedirectForm(
-              requestRecord?.redirectForm ?? root?.redirectForm,
-            ),
+      handoffStarted: Boolean(
+        (typeof requestRecord?.redirectUrl === 'string' &&
+          requestRecord.redirectUrl.trim()) ||
+        this.parseRedirectForm(
+          requestRecord?.redirectForm ?? root?.redirectForm,
         ),
+      ),
     };
   }
 
@@ -518,11 +519,13 @@ export class PaymentsService {
     lastFallback?: Record<string, unknown> | null;
     initializationFailures?: Array<Record<string, unknown>>;
   }): Prisma.InputJsonObject {
-    const eligibleGateways = args.decision.eligibleGateways.map((candidate) => ({
-      gateway: candidate.gateway,
-      priority: candidate.priority,
-      reason: candidate.reason,
-    }));
+    const eligibleGateways = args.decision.eligibleGateways.map(
+      (candidate) => ({
+        gateway: candidate.gateway,
+        priority: candidate.priority,
+        reason: candidate.reason,
+      }),
+    );
     const skippedGateways = args.decision.skippedGateways.map((gateway) => ({
       gateway: gateway.gateway,
       issues: gateway.issues,
@@ -545,8 +548,7 @@ export class PaymentsService {
           ? {
               featureAccess: {
                 planCode: args.routingPlan.planCode,
-                manualGatewaySelection:
-                  args.routingPlan.manualGatewaySelection,
+                manualGatewaySelection: args.routingPlan.manualGatewaySelection,
                 autoRouting: args.routingPlan.autoRouting,
                 fallback: args.routingPlan.fallback,
                 source: args.routingPlan.source,
@@ -568,9 +570,13 @@ export class PaymentsService {
   }): Prisma.InputJsonObject {
     return {
       monetization: {
+        feeModel: 'ADDED_ON_TOP',
         planCode: args.planCode,
+        baseAmountCents: args.feeBreakdown.baseAmountCents,
+        chargeAmountCents: args.feeBreakdown.chargeAmountCents,
         platformFeeCents: args.feeBreakdown.platformFeeCents,
         merchantNetCents: args.feeBreakdown.merchantNetCents,
+        providerFeeCents: null,
         feePolicy: {
           fixedFeeCents: args.feePolicy.fixedFeeCents,
           percentageBps: args.feePolicy.percentageBps,
@@ -614,6 +620,7 @@ export class PaymentsService {
     const feePolicy = this.asRecord(monetization?.feePolicy);
 
     return {
+      feeModel: this.trimToNull(monetization?.feeModel),
       merchantPlanCode: this.trimToNull(monetization?.planCode),
       platformFeeRuleType: this.trimToNull(feePolicy?.ruleType),
       platformFeeSource: this.trimToNull(feePolicy?.source),
@@ -751,9 +758,11 @@ export class PaymentsService {
     const eventRecord = this.asRecord(yocoRecord?.rawEvent);
 
     const checkoutId =
-      (typeof yocoRecord?.checkoutId === 'string' && yocoRecord.checkoutId.trim()) ||
+      (typeof yocoRecord?.checkoutId === 'string' &&
+        yocoRecord.checkoutId.trim()) ||
       (typeof requestRaw?.id === 'string' && requestRaw.id.trim()) ||
-      (typeof root?.externalReference === 'string' && root.externalReference.trim()) ||
+      (typeof root?.externalReference === 'string' &&
+        root.externalReference.trim()) ||
       null;
     const checkoutStatus =
       (typeof yocoRecord?.checkoutStatus === 'string' &&
@@ -761,8 +770,10 @@ export class PaymentsService {
       (typeof requestRaw?.status === 'string' && requestRaw.status.trim()) ||
       null;
     const paymentId =
-      (typeof yocoRecord?.paymentId === 'string' && yocoRecord.paymentId.trim()) ||
-      (typeof requestRaw?.paymentId === 'string' && requestRaw.paymentId.trim()) ||
+      (typeof yocoRecord?.paymentId === 'string' &&
+        yocoRecord.paymentId.trim()) ||
+      (typeof requestRaw?.paymentId === 'string' &&
+        requestRaw.paymentId.trim()) ||
       null;
     const eventType =
       typeof yocoRecord?.eventType === 'string' && yocoRecord.eventType.trim()
@@ -797,7 +808,9 @@ export class PaymentsService {
     };
   }
 
-  private extractPaystackState(rawGateway: Prisma.JsonValue | null | undefined) {
+  private extractPaystackState(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
     const root = this.asRecord(rawGateway);
     const requestRecord = this.asRecord(root?.request);
     const requestRaw = this.asRecord(requestRecord?.raw);
@@ -821,7 +834,8 @@ export class PaymentsService {
     const eventType = this.trimToNull(paystackRecord?.eventType) ?? null;
     const paidAt = this.trimToNull(paystackRecord?.paidAt) ?? null;
     const channel = this.trimToNull(paystackRecord?.channel) ?? null;
-    const customerEmail = this.trimToNull(paystackRecord?.customerEmail) ?? null;
+    const customerEmail =
+      this.trimToNull(paystackRecord?.customerEmail) ?? null;
     const gatewayResponse =
       this.trimToNull(paystackRecord?.gatewayResponse) ?? null;
 
@@ -979,8 +993,10 @@ export class PaymentsService {
         merchantId: true,
         reference: true,
         currency: true,
+        baseAmountCents: true,
         amountCents: true,
         platformFeeCents: true,
+        providerFeeCents: true,
         merchantNetCents: true,
         status: true,
         gateway: true,
@@ -1026,8 +1042,11 @@ export class PaymentsService {
       merchantId: payment.merchantId,
       reference: payment.reference,
       currency: payment.currency,
+      baseAmountCents: payment.baseAmountCents,
       amountCents: payment.amountCents,
+      chargeAmountCents: payment.amountCents,
       platformFeeCents: payment.platformFeeCents,
+      providerFeeCents: payment.providerFeeCents,
       merchantNetCents: payment.merchantNetCents,
       status: payment.status,
       gateway: payment.gateway,
@@ -1049,6 +1068,7 @@ export class PaymentsService {
       routingReason: routingSummary.routingReason,
       fallbackCount: routingSummary.fallbackCount,
       routingPlanCode: routingSummary.routingPlanCode,
+      feeModel: monetizationSummary.feeModel,
       merchantPlanCode: monetizationSummary.merchantPlanCode,
       platformFeeRuleType: monetizationSummary.platformFeeRuleType,
       platformFeeSource: monetizationSummary.platformFeeSource,
@@ -1062,8 +1082,10 @@ export class PaymentsService {
     reference: true,
     status: true,
     gateway: true,
+    baseAmountCents: true,
     amountCents: true,
     platformFeeCents: true,
+    providerFeeCents: true,
     merchantNetCents: true,
     currency: true,
     customerEmail: true,
@@ -1094,7 +1116,7 @@ export class PaymentsService {
   private randomReference() {
     return `INV-${crypto.randomBytes(6).toString('hex')}`;
   }
-    private normalizeIdempotencyKey(value: string | undefined) {
+  private normalizeIdempotencyKey(value: string | undefined) {
     const key = value?.trim();
     return key ? key.slice(0, 255) : null;
   }
@@ -1114,10 +1136,7 @@ export class PaymentsService {
   }
 
   private normalizeComparableText(value: string | null | undefined) {
-    return (value ?? '')
-      .trim()
-      .replace(/\s+/g, ' ')
-      .toLowerCase();
+    return (value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
   }
 
   private publicOzowSignupAmountCents() {
@@ -1126,10 +1145,7 @@ export class PaymentsService {
       return 9900;
     }
 
-    return this.parsePositiveInt(
-      configured,
-      'PUBLIC_OZOW_SIGNUP_AMOUNT_CENTS',
-    );
+    return this.parsePositiveInt(configured, 'PUBLIC_OZOW_SIGNUP_AMOUNT_CENTS');
   }
 
   private buildPublicOzowSignupReference(merchantId: string) {
@@ -1180,13 +1196,17 @@ export class PaymentsService {
     };
   }
 
-  private isPublicOzowSignupPayment(rawGateway: Prisma.JsonValue | null | undefined) {
+  private isPublicOzowSignupPayment(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
     const root = this.asRecord(rawGateway);
     const publicFlow = this.asRecord(root?.publicFlow);
     return publicFlow?.flow === 'merchant_signup';
   }
 
-  private publicOzowSignupFlow(rawGateway: Prisma.JsonValue | null | undefined) {
+  private publicOzowSignupFlow(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
     const root = this.asRecord(rawGateway);
     const publicFlow = this.asRecord(root?.publicFlow);
     if (publicFlow?.flow !== 'merchant_signup') {
@@ -1232,7 +1252,6 @@ export class PaymentsService {
     return existing;
   }
 
-
   private parseRequestedGateway(value: string | undefined): RequestedGateway {
     const raw = value?.trim().toUpperCase();
     if (!raw) return null;
@@ -1261,13 +1280,16 @@ export class PaymentsService {
       throw new BadRequestException('interval is required');
     }
 
-    if (!Object.values(SubscriptionInterval).includes(raw as SubscriptionInterval)) {
-      throw new BadRequestException('interval must be one of DAY, WEEK, MONTH, YEAR');
+    if (
+      !Object.values(SubscriptionInterval).includes(raw as SubscriptionInterval)
+    ) {
+      throw new BadRequestException(
+        'interval must be one of DAY, WEEK, MONTH, YEAR',
+      );
     }
 
     return raw as SubscriptionInterval;
   }
-
 
   private resolveGatewayForCreate(
     requestedGateway: RequestedGateway,
@@ -1333,7 +1355,9 @@ export class PaymentsService {
           ? args.error.message
           : 'Gateway initialization failed',
       errorName:
-        args.error instanceof Error ? args.error.name : 'GatewayInitializationError',
+        args.error instanceof Error
+          ? args.error.name
+          : 'GatewayInitializationError',
       fallbackTo: args.fallbackTo ?? null,
     };
   }
@@ -1385,7 +1409,9 @@ export class PaymentsService {
     routingPlan: RoutingPlanFeatures;
     monetizationSnapshot: Prisma.InputJsonObject;
   }) {
-    const existingRoutingState = this.extractStoredRoutingState(args.payment.rawGateway);
+    const existingRoutingState = this.extractStoredRoutingState(
+      args.payment.rawGateway,
+    );
     let fallbackCount = existingRoutingState.fallbackCount;
     let initializationFailures = this.extractStoredInitializationFailures(
       args.payment.rawGateway,
@@ -1393,7 +1419,10 @@ export class PaymentsService {
 
     let lastError: unknown = null;
 
-    for (const [index, candidate] of args.routingDecision.eligibleGateways.entries()) {
+    for (const [
+      index,
+      candidate,
+    ] of args.routingDecision.eligibleGateways.entries()) {
       try {
         const gatewaySession = await this.createGatewayRedirect({
           gateway: candidate.gateway,
@@ -1456,7 +1485,10 @@ export class PaymentsService {
                   ? PaymentStatus.CREATED
                   : PaymentStatus.PENDING,
               rawGateway: this.mergeGatewayPayload(args.payment.rawGateway, {
-                ...this.gatewayRequestSnapshot(candidate.gateway, gatewaySession),
+                ...this.gatewayRequestSnapshot(
+                  candidate.gateway,
+                  gatewaySession,
+                ),
                 ...this.buildRoutingSnapshot({
                   decision,
                   routingPlan: args.routingPlan,
@@ -1486,7 +1518,9 @@ export class PaymentsService {
         lastError = error;
         const nextCandidate =
           args.routingDecision.eligibleGateways[index + 1]?.gateway ?? null;
-        const nextFallbackCount = nextCandidate ? fallbackCount + 1 : fallbackCount;
+        const nextFallbackCount = nextCandidate
+          ? fallbackCount + 1
+          : fallbackCount;
         const failureRecord = this.buildInitializationFailureRecord({
           gateway: candidate.gateway,
           error,
@@ -1547,7 +1581,6 @@ export class PaymentsService {
       ? lastError
       : new BadRequestException('No gateway available for initialization');
   }
-
 
   private mapPaymentStatusToAttemptStatus(status: PaymentStatus) {
     if (status === PaymentStatus.PAID) return 'SUCCEEDED';
@@ -1741,7 +1774,7 @@ export class PaymentsService {
     });
   }
 
-    async recordSuccessfulPaymentLedgerByPaymentId(paymentIdPlain: string) {
+  async recordSuccessfulPaymentLedgerByPaymentId(paymentIdPlain: string) {
     const paymentId = paymentIdPlain?.trim();
     if (!paymentId) {
       throw new BadRequestException('paymentId is required');
@@ -1766,7 +1799,9 @@ export class PaymentsService {
     }
 
     if (payment.status !== PaymentStatus.PAID) {
-      throw new BadRequestException('Ledger can only be recorded for paid payments');
+      throw new BadRequestException(
+        'Ledger can only be recorded for paid payments',
+      );
     }
 
     const existingLedger = await this.prisma.ledgerEntry.findFirst({
@@ -1815,16 +1850,15 @@ export class PaymentsService {
   }
 
   async createPaymentIntent(
-  merchantIdPlain: string,
-  data: CreatePaymentIntentDto,
-  _idempotencyKey?: string,
-) {
+    merchantIdPlain: string,
+    data: CreatePaymentIntentDto,
+    _idempotencyKey?: string,
+  ) {
     const merchantId = merchantIdPlain?.trim();
     if (!merchantId) throw new UnauthorizedException('Invalid API key');
 
-    const normalizedIdempotencyKey = this.normalizeIdempotencyKey(
-      _idempotencyKey,
-    );
+    const normalizedIdempotencyKey =
+      this.normalizeIdempotencyKey(_idempotencyKey);
     const idempotencyScope = 'payment_intents.create';
     const idempotencyRequestHash = normalizedIdempotencyKey
       ? this.createIdempotencyRequestHash(idempotencyScope, data)
@@ -1857,7 +1891,10 @@ export class PaymentsService {
       }
     }
 
-    const amountCents = this.parsePositiveInt(data?.amountCents, 'amountCents');
+    const baseAmountCents = this.parsePositiveInt(
+      data?.amountCents,
+      'amountCents',
+    );
     const currency =
       typeof data?.currency === 'string' && data.currency.trim()
         ? data.currency.trim().toUpperCase()
@@ -1872,7 +1909,7 @@ export class PaymentsService {
     const routingDecision = this.resolveGatewayForCreate(
       requestedGateway,
       merchant,
-      amountCents,
+      baseAmountCents,
       currency,
       data?.customerEmail,
       data?.paymentMethodPreference,
@@ -1882,7 +1919,7 @@ export class PaymentsService {
     const intent = await this.prisma.paymentIntent.create({
       data: {
         merchantId,
-        amountCents,
+        amountCents: baseAmountCents,
         currency,
         status: IntentStatus.REQUIRES_CONFIRMATION,
         customerEmail: data?.customerEmail,
@@ -2032,15 +2069,14 @@ export class PaymentsService {
   }
 
   async createPayment(
-  merchantIdPlain: string,
-  data: CreatePaymentDto,
-  _idempotencyKey?: string,
-) {
+    merchantIdPlain: string,
+    data: CreatePaymentDto,
+    _idempotencyKey?: string,
+  ) {
     const merchantId = merchantIdPlain?.trim();
     if (!merchantId) throw new UnauthorizedException('Invalid API key');
-        const normalizedIdempotencyKey = this.normalizeIdempotencyKey(
-      _idempotencyKey,
-    );
+    const normalizedIdempotencyKey =
+      this.normalizeIdempotencyKey(_idempotencyKey);
     const idempotencyScope = 'payments.create';
     const idempotencyRequestHash = normalizedIdempotencyKey
       ? this.createIdempotencyRequestHash(idempotencyScope, data)
@@ -2070,15 +2106,23 @@ export class PaymentsService {
       }
     }
 
-    const amountCents = this.parsePositiveInt(data?.amountCents, 'amountCents');
+    const baseAmountCents = this.parsePositiveInt(
+      data?.amountCents,
+      'amountCents',
+    );
     const merchant = await this.getMerchantGatewayConfig(merchantId);
     const routingPlan = this.resolveMerchantRoutingPlan(merchant);
     const feePolicy = this.resolveMerchantFeePolicy(merchant);
     const feeBreakdown = computePlatformFeeBreakdown({
-      amountCents,
+      amountCents: baseAmountCents,
       policy: feePolicy,
     });
-    const { platformFeeCents, merchantNetCents } = feeBreakdown;
+    const {
+      baseAmountCents: storedBaseAmountCents,
+      chargeAmountCents,
+      platformFeeCents,
+      merchantNetCents,
+    } = feeBreakdown;
     const expiresInMinutes =
       data?.expiresInMinutes !== undefined
         ? this.parsePositiveInt(data.expiresInMinutes, 'expiresInMinutes')
@@ -2100,7 +2144,7 @@ export class PaymentsService {
     const routingDecision = this.resolveGatewayForCreate(
       requestedGateway,
       merchant,
-      amountCents,
+      chargeAmountCents,
       currency,
       data?.customerEmail,
       data?.paymentMethodPreference,
@@ -2121,8 +2165,10 @@ export class PaymentsService {
         merchantId,
         reference,
         currency,
-        amountCents,
+        baseAmountCents: storedBaseAmountCents,
+        amountCents: chargeAmountCents,
         platformFeeCents,
+        providerFeeCents: null,
         merchantNetCents,
         gateway,
         checkoutToken,
@@ -2135,8 +2181,10 @@ export class PaymentsService {
         merchantId: true,
         reference: true,
         currency: true,
+        baseAmountCents: true,
         amountCents: true,
         platformFeeCents: true,
+        providerFeeCents: true,
         merchantNetCents: true,
         status: true,
         gateway: true,
@@ -2172,7 +2220,7 @@ export class PaymentsService {
         currency: payment.currency,
         description: payment.description,
         customerEmail: payment.customerEmail,
-        status: payment.status as PaymentStatus,
+        status: payment.status,
         rawGateway: null,
         checkoutToken: payment.checkoutToken,
       },
@@ -2185,29 +2233,29 @@ export class PaymentsService {
     const redirectUrl = initialization.session.redirectUrl;
     const gatewayRef = initialization.gatewayRef;
     const selectedGateway = initialization.gateway;
-      
-      if (normalizedIdempotencyKey && idempotencyRequestHash) {
-  await this.prisma.idempotencyKey.upsert({
-    where: {
-      merchantId_scope_idempotencyKey: {
-        merchantId,
-        scope: idempotencyScope,
-        idempotencyKey: normalizedIdempotencyKey,
-      },
-    },
-    update: {
-      requestHash: idempotencyRequestHash,
-      paymentId: payment.id,
-    },
-    create: {
-      merchantId,
-      scope: idempotencyScope,
-      idempotencyKey: normalizedIdempotencyKey,
-      requestHash: idempotencyRequestHash,
-      paymentId: payment.id,
-    },
-  });
-}
+
+    if (normalizedIdempotencyKey && idempotencyRequestHash) {
+      await this.prisma.idempotencyKey.upsert({
+        where: {
+          merchantId_scope_idempotencyKey: {
+            merchantId,
+            scope: idempotencyScope,
+            idempotencyKey: normalizedIdempotencyKey,
+          },
+        },
+        update: {
+          requestHash: idempotencyRequestHash,
+          paymentId: payment.id,
+        },
+        create: {
+          merchantId,
+          scope: idempotencyScope,
+          idempotencyKey: normalizedIdempotencyKey,
+          requestHash: idempotencyRequestHash,
+          paymentId: payment.id,
+        },
+      });
+    }
 
     return {
       ...payment,
@@ -2234,7 +2282,12 @@ export class PaymentsService {
     merchantIdPlain: string,
     data: Pick<
       CreatePaymentDto,
-      'amountCents' | 'currency' | 'reference' | 'customerEmail' | 'description' | 'bankReference'
+      | 'amountCents'
+      | 'currency'
+      | 'reference'
+      | 'customerEmail'
+      | 'description'
+      | 'bankReference'
     >,
     idempotencyKey?: string,
   ) {
@@ -2243,10 +2296,15 @@ export class PaymentsService {
 
     const merchant = await this.getMerchantGatewayConfig(merchantId);
     if (!merchant.ozowSiteCode || !merchant.ozowPrivateKey) {
-      throw new BadRequestException('Ozow is not configured for this environment');
+      throw new BadRequestException(
+        'Ozow is not configured for this environment',
+      );
     }
 
-    const amountCents = this.parsePositiveInt(data?.amountCents, 'amountCents');
+    const baseAmountCents = this.parsePositiveInt(
+      data?.amountCents,
+      'amountCents',
+    );
     const currency =
       typeof data?.currency === 'string' && data.currency.trim()
         ? data.currency.trim().toUpperCase()
@@ -2263,8 +2321,10 @@ export class PaymentsService {
         merchantId: true,
         reference: true,
         currency: true,
+        baseAmountCents: true,
         amountCents: true,
         platformFeeCents: true,
+        providerFeeCents: true,
         merchantNetCents: true,
         status: true,
         gateway: true,
@@ -2283,7 +2343,7 @@ export class PaymentsService {
       return this.createPayment(
         merchantId,
         {
-          amountCents,
+          amountCents: baseAmountCents,
           currency,
           gateway: GatewayProvider.OZOW,
           reference,
@@ -2299,7 +2359,10 @@ export class PaymentsService {
       );
     }
 
-    if (existing.amountCents !== amountCents || existing.currency !== currency) {
+    if (
+      existing.baseAmountCents !== baseAmountCents ||
+      existing.currency !== currency
+    ) {
       throw new ConflictException(
         'Existing payment reference does not match amount or currency',
       );
@@ -2326,7 +2389,8 @@ export class PaymentsService {
         customerEmail: data?.customerEmail ?? existing.customerEmail,
       },
       merchant,
-      itemName: data?.description ?? existing.description ?? 'Stackaura payment',
+      itemName:
+        data?.description ?? existing.description ?? 'Stackaura payment',
       returnUrl: OZOW_SUCCESS_URL,
       cancelUrl: OZOW_CANCEL_URL,
       errorUrl: OZOW_ERROR_URL,
@@ -2342,10 +2406,13 @@ export class PaymentsService {
       planCode: routingPlan.planCode,
       feePolicy,
       feeBreakdown: {
-        platformFeeCents: (existing as { platformFeeCents?: number })
-          .platformFeeCents ?? 0,
-        merchantNetCents: (existing as { merchantNetCents?: number })
-          .merchantNetCents ?? existing.amountCents,
+        baseAmountCents: existing.baseAmountCents,
+        platformFeeCents:
+          (existing as { platformFeeCents?: number }).platformFeeCents ?? 0,
+        chargeAmountCents: existing.amountCents,
+        merchantNetCents:
+          (existing as { merchantNetCents?: number }).merchantNetCents ??
+          existing.baseAmountCents,
       },
     });
 
@@ -2363,7 +2430,10 @@ export class PaymentsService {
           description: data?.description ?? existing.description,
           expiresAt: new Date(Date.now() + 30 * 60 * 1000),
           rawGateway: this.mergeGatewayPayload(existing.rawGateway, {
-            ...this.gatewayRequestSnapshot(GatewayProvider.OZOW, gatewaySession),
+            ...this.gatewayRequestSnapshot(
+              GatewayProvider.OZOW,
+              gatewaySession,
+            ),
             ...this.buildRoutingSnapshot({
               decision: {
                 mode: 'STRICT_PRIORITY',
@@ -2432,8 +2502,10 @@ export class PaymentsService {
         checkoutToken: true,
         merchantId: true,
         reference: true,
+        baseAmountCents: true,
         amountCents: true,
         platformFeeCents: true,
+        providerFeeCents: true,
         merchantNetCents: true,
         currency: true,
         status: true,
@@ -2483,7 +2555,8 @@ export class PaymentsService {
       {
         value: 'AUTO',
         label: 'Auto',
-        description: 'Let Stackaura pick the best available rail for this payment.',
+        description:
+          'Let Stackaura pick the best available rail for this payment.',
         detail: args.selectionLocked
           ? `This checkout is locked to ${lockedToLabel}.`
           : autoDetail,
@@ -2496,10 +2569,11 @@ export class PaymentsService {
         value: GatewayProvider.YOCO,
         label: 'Yoco',
         description: 'Fast card checkout with Yoco.',
-        detail: args.selectionLocked && args.selectedGateway !== GatewayProvider.YOCO
-          ? `This checkout is locked to ${lockedToLabel}.`
-          : readinessByGateway.get(GatewayProvider.YOCO)?.issues[0] ??
-            'Available for this checkout.',
+        detail:
+          args.selectionLocked && args.selectedGateway !== GatewayProvider.YOCO
+            ? `This checkout is locked to ${lockedToLabel}.`
+            : (readinessByGateway.get(GatewayProvider.YOCO)?.issues[0] ??
+              'Available for this checkout.'),
         available:
           (!args.selectionLocked ||
             args.selectedGateway === GatewayProvider.YOCO) &&
@@ -2513,10 +2587,11 @@ export class PaymentsService {
         value: GatewayProvider.OZOW,
         label: 'Ozow',
         description: 'Instant EFT checkout with Ozow.',
-        detail: args.selectionLocked && args.selectedGateway !== GatewayProvider.OZOW
-          ? `This checkout is locked to ${lockedToLabel}.`
-          : readinessByGateway.get(GatewayProvider.OZOW)?.issues[0] ??
-            'Available for this checkout.',
+        detail:
+          args.selectionLocked && args.selectedGateway !== GatewayProvider.OZOW
+            ? `This checkout is locked to ${lockedToLabel}.`
+            : (readinessByGateway.get(GatewayProvider.OZOW)?.issues[0] ??
+              'Available for this checkout.'),
         available:
           (!args.selectionLocked ||
             args.selectedGateway === GatewayProvider.OZOW) &&
@@ -2534,8 +2609,8 @@ export class PaymentsService {
           args.selectionLocked &&
           args.selectedGateway !== GatewayProvider.PAYSTACK
             ? `This checkout is locked to ${lockedToLabel}.`
-            : readinessByGateway.get(GatewayProvider.PAYSTACK)?.issues[0] ??
-              'Available for this checkout.',
+            : (readinessByGateway.get(GatewayProvider.PAYSTACK)?.issues[0] ??
+              'Available for this checkout.'),
         available:
           (!args.selectionLocked ||
             args.selectedGateway === GatewayProvider.PAYSTACK) &&
@@ -2550,11 +2625,15 @@ export class PaymentsService {
   }
 
   async getHostedCheckoutPageContext(checkoutTokenPlain: string) {
-    const payment = await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
+    const payment =
+      await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
+    const latestAttempt = payment.attempts[0] ?? null;
     const merchant = await this.getMerchantGatewayConfig(payment.merchantId);
     const routingPlan = this.resolveMerchantRoutingPlan(merchant);
     const routingState = this.extractStoredRoutingState(payment.rawGateway);
-    const checkoutRequest = this.extractCheckoutRequestContext(payment.rawGateway);
+    const checkoutRequest = this.extractCheckoutRequestContext(
+      payment.rawGateway,
+    );
     const selectedGateway = this.coerceCheckoutSelectableGateway(
       routingState.requestedGateway,
     );
@@ -2584,18 +2663,31 @@ export class PaymentsService {
       autoSelectedGateway = null;
     }
 
+    const redirectState = this.extractRedirectState(
+      payment.rawGateway,
+      latestAttempt?.redirectUrl ?? null,
+    );
+
     return {
       checkoutToken: payment.checkoutToken,
       merchantName: payment.merchant?.name ?? 'Merchant',
       reference: payment.reference,
+      baseAmountCents: payment.baseAmountCents,
       amountCents: payment.amountCents,
+      chargeAmountCents: payment.amountCents,
+      platformFeeCents: payment.platformFeeCents,
+      providerFeeCents: payment.providerFeeCents,
+      merchantNetCents: payment.merchantNetCents,
       currency: payment.currency,
       status: payment.status,
       description: payment.description,
       customerEmail: payment.customerEmail,
       expiresAt: payment.expiresAt,
       currentGateway:
-        payment.attempts[0]?.gateway ?? payment.gateway ?? autoSelectedGateway,
+        latestAttempt?.gateway ?? payment.gateway ?? autoSelectedGateway,
+      redirectUrl: redirectState.redirectUrl,
+      redirectForm: redirectState.redirectForm,
+      redirectMethod: redirectState.redirectMethod,
       selectedGateway,
       selectionLocked,
       gatewayOptions: this.buildHostedCheckoutGatewayOptions({
@@ -2612,11 +2704,14 @@ export class PaymentsService {
     checkoutTokenPlain: string,
     gatewayPlain?: string | null,
   ) {
-    const payment = await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
+    const payment =
+      await this.getHostedCheckoutPaymentRecord(checkoutTokenPlain);
     const merchant = await this.getMerchantGatewayConfig(payment.merchantId);
     const routingPlan = this.resolveMerchantRoutingPlan(merchant);
     const routingState = this.extractStoredRoutingState(payment.rawGateway);
-    const checkoutRequest = this.extractCheckoutRequestContext(payment.rawGateway);
+    const checkoutRequest = this.extractCheckoutRequestContext(
+      payment.rawGateway,
+    );
     const storedSelectableGateway = this.coerceCheckoutSelectableGateway(
       routingState.requestedGateway,
     );
@@ -2624,7 +2719,10 @@ export class PaymentsService {
       this.parseCheckoutSelectableGateway(gatewayPlain ?? null) ??
       storedSelectableGateway;
 
-    if (storedSelectableGateway !== 'AUTO' && requestedGateway !== storedSelectableGateway) {
+    if (
+      storedSelectableGateway !== 'AUTO' &&
+      requestedGateway !== storedSelectableGateway
+    ) {
       throw new BadRequestException(
         `This checkout is locked to ${this.gatewayDisplayName(storedSelectableGateway)}`,
       );
@@ -2679,7 +2777,9 @@ export class PaymentsService {
       planCode: routingPlan.planCode,
       feePolicy,
       feeBreakdown: {
+        baseAmountCents: payment.baseAmountCents,
         platformFeeCents: payment.platformFeeCents,
+        chargeAmountCents: payment.amountCents,
         merchantNetCents: payment.merchantNetCents,
       },
     });
@@ -2971,7 +3071,8 @@ export class PaymentsService {
       ozowIsTest: payment.merchant.ozowIsTest,
     });
     const providerReference =
-      this.extractOzowProviderReference(payment.rawGateway) ?? payment.reference;
+      this.extractOzowProviderReference(payment.rawGateway) ??
+      payment.reference;
     const providerTransactionId =
       payment.gatewayRef && payment.gatewayRef !== providerReference
         ? payment.gatewayRef
@@ -3045,10 +3146,7 @@ export class PaymentsService {
       localStatus = nextStatus;
       synced = true;
 
-      if (
-        payment.status !== nextStatus &&
-        nextStatus === PaymentStatus.PAID
-      ) {
+      if (payment.status !== nextStatus && nextStatus === PaymentStatus.PAID) {
         await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
         await this.fulfillPaidSignupPayment(payment.id);
       }
@@ -3199,10 +3297,7 @@ export class PaymentsService {
       localStatus = nextStatus;
       synced = true;
 
-      if (
-        payment.status !== nextStatus &&
-        nextStatus === PaymentStatus.PAID
-      ) {
+      if (payment.status !== nextStatus && nextStatus === PaymentStatus.PAID) {
         await this.recordSuccessfulPaymentLedgerByPaymentId(payment.id);
         await this.fulfillPaidSignupPayment(payment.id);
       }
@@ -3262,14 +3357,16 @@ export class PaymentsService {
     const snapshot = this.extractYocoState(payment.rawGateway);
     const expired = payment.expiresAt.getTime() <= Date.now();
     let providerLookupError: string | null = null;
-    let providerSnapshot:
-      | Awaited<ReturnType<YocoGateway['getCheckoutStatus']>>
-      | null = null;
+    let providerSnapshot: Awaited<
+      ReturnType<YocoGateway['getCheckoutStatus']>
+    > | null = null;
 
     const checkoutId = snapshot.checkoutId ?? payment.gatewayRef;
     if (checkoutId) {
       try {
-        const yocoSecretKey = decryptStoredSecret(payment.merchant.yocoSecretKey);
+        const yocoSecretKey = decryptStoredSecret(
+          payment.merchant.yocoSecretKey,
+        );
         const yocoConfig = resolveYocoConfig({
           yocoPublicKey: payment.merchant.yocoPublicKey,
           yocoSecretKey,
@@ -3361,7 +3458,10 @@ export class PaymentsService {
           data: {
             ...(payment.status !== nextStatus ? { status: nextStatus } : {}),
             gateway: GatewayProvider.YOCO,
-            gatewayRef: providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+            gatewayRef:
+              providerSnapshot?.checkoutId ??
+              snapshot.checkoutId ??
+              payment.gatewayRef,
             rawGateway: this.mergeGatewayPayload(payment.rawGateway, {
               provider: 'YOCO',
               yoco: {
@@ -3379,7 +3479,8 @@ export class PaymentsService {
                 lookupError: providerLookupError,
                 externalReference:
                   providerSnapshot?.externalReference ?? payment.reference,
-                clientReferenceId: providerSnapshot?.clientReferenceId ?? payment.id,
+                clientReferenceId:
+                  providerSnapshot?.clientReferenceId ?? payment.id,
                 source:
                   providerSnapshot !== null
                     ? 'provider_lookup_and_webhook'
@@ -3423,12 +3524,16 @@ export class PaymentsService {
       providerStatus: snapshot.paymentStatus ?? checkoutStatus,
       providerEventType: snapshot.eventType,
       checkoutId:
-        providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+        providerSnapshot?.checkoutId ??
+        snapshot.checkoutId ??
+        payment.gatewayRef,
       providerPaymentId,
       processingMode,
       failureReason: snapshot.failureReason,
       gatewayRef:
-        providerSnapshot?.checkoutId ?? snapshot.checkoutId ?? payment.gatewayRef,
+        providerSnapshot?.checkoutId ??
+        snapshot.checkoutId ??
+        payment.gatewayRef,
       expired,
       synced,
       providerLookupError,
@@ -3575,13 +3680,19 @@ export class PaymentsService {
       yocoTestMode: payment.merchant.yocoTestMode,
     });
     const merchantPaystackConfig = resolvePaystackConfig({
-      paystackSecretKey: decryptStoredSecret(payment.merchant.paystackSecretKey),
+      paystackSecretKey: decryptStoredSecret(
+        payment.merchant.paystackSecretKey,
+      ),
       paystackTestMode: payment.merchant.paystackTestMode,
     });
     const merchantConfig = {
       ...payment.merchant,
-      payfastMerchantKey: decryptStoredSecret(payment.merchant.payfastMerchantKey),
-      payfastPassphrase: decryptStoredSecret(payment.merchant.payfastPassphrase),
+      payfastMerchantKey: decryptStoredSecret(
+        payment.merchant.payfastMerchantKey,
+      ),
+      payfastPassphrase: decryptStoredSecret(
+        payment.merchant.payfastPassphrase,
+      ),
       ozowSiteCode: merchantOzowConfig.siteCode,
       ozowPrivateKey: merchantOzowConfig.privateKey,
       ozowApiKey: merchantOzowConfig.apiKey,
@@ -3608,7 +3719,9 @@ export class PaymentsService {
 
       throw new BadRequestException('Fallback is not enabled for this plan');
     }
-    const checkoutRequest = this.extractCheckoutRequestContext(payment.rawGateway);
+    const checkoutRequest = this.extractCheckoutRequestContext(
+      payment.rawGateway,
+    );
     const routingDecision = this.resolveNextFailoverDecision({
       paymentGateway: payment.gateway ?? null,
       attempts: payment.attempts,
@@ -3703,8 +3816,10 @@ export class PaymentsService {
         merchantId: true,
         reference: true,
         currency: true,
+        baseAmountCents: true,
         amountCents: true,
         platformFeeCents: true,
+        providerFeeCents: true,
         merchantNetCents: true,
         status: true,
         gateway: true,
@@ -3742,10 +3857,14 @@ export class PaymentsService {
       rawGateway,
       rest.gateway,
     );
-    const monetizationSummary = this.extractStoredMonetizationSummary(rawGateway);
+    const monetizationSummary =
+      this.extractStoredMonetizationSummary(rawGateway);
 
     return {
       ...rest,
+      baseAmountCents: payment.baseAmountCents,
+      chargeAmountCents: payment.amountCents,
+      providerFeeCents: payment.providerFeeCents,
       checkoutUrl: `${this.appUrl()}/v1/checkout/${rest.checkoutToken}`,
       // Convenience field for clients: the redirect URL for the latest/current attempt
       redirectUrl: redirectState.redirectUrl,
@@ -3758,6 +3877,7 @@ export class PaymentsService {
       routingReason: routingSummary.routingReason,
       fallbackCount: routingSummary.fallbackCount,
       routingPlanCode: routingSummary.routingPlanCode,
+      feeModel: monetizationSummary.feeModel,
       merchantPlanCode: monetizationSummary.merchantPlanCode,
       platformFeeRuleType: monetizationSummary.platformFeeRuleType,
       platformFeeSource: monetizationSummary.platformFeeSource,
@@ -3855,7 +3975,12 @@ export class PaymentsService {
     const page = hasMore ? rows.slice(0, limit) : rows;
 
     const data = page.map((row) => {
-      const { checkoutToken, attempts, rawGateway: _rawGateway, ...payment } = row;
+      const {
+        checkoutToken,
+        attempts,
+        rawGateway: _rawGateway,
+        ...payment
+      } = row;
       const routingSummary = this.extractStoredRoutingSummary(
         row.rawGateway,
         row.gateway,
@@ -3865,6 +3990,7 @@ export class PaymentsService {
       );
       return {
         ...payment,
+        chargeAmountCents: payment.amountCents,
         checkoutUrl: `${this.appUrl()}/v1/checkout/${checkoutToken}`,
         routingMode: routingSummary.routingMode,
         routingSelectionMode: routingSummary.routingSelectionMode,
@@ -3872,6 +3998,7 @@ export class PaymentsService {
         selectedGateway: routingSummary.selectedGateway,
         fallbackCount: routingSummary.fallbackCount,
         routingPlanCode: routingSummary.routingPlanCode,
+        feeModel: monetizationSummary.feeModel,
         merchantPlanCode: monetizationSummary.merchantPlanCode,
         platformFeeRuleType: monetizationSummary.platformFeeRuleType,
         platformFeeSource: monetizationSummary.platformFeeSource,

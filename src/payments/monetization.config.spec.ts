@@ -32,8 +32,10 @@ describe('monetization.config', () => {
       }),
     );
     expect(fee).toEqual({
+      baseAmountCents: 1000,
       platformFeeCents: 125,
-      merchantNetCents: 875,
+      chargeAmountCents: 1125,
+      merchantNetCents: 1000,
     });
   });
 
@@ -70,8 +72,10 @@ describe('monetization.config', () => {
       }),
     );
     expect(fee).toEqual({
+      baseAmountCents: 2000,
       platformFeeCents: 50,
-      merchantNetCents: 1950,
+      chargeAmountCents: 2050,
+      merchantNetCents: 2000,
     });
   });
 
@@ -99,8 +103,10 @@ describe('monetization.config', () => {
       }),
     );
     expect(fee).toEqual({
+      baseAmountCents: 10000,
       platformFeeCents: 450,
-      merchantNetCents: 9550,
+      chargeAmountCents: 10450,
+      merchantNetCents: 10000,
     });
   });
 

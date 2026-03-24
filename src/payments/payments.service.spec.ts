@@ -62,8 +62,10 @@ describe('PaymentsService', () => {
     merchantId: 'm-1',
     reference: 'INV-1',
     currency: 'ZAR',
+    baseAmountCents: 1000,
     amountCents: 1000,
     platformFeeCents: 0,
+    providerFeeCents: null,
     merchantNetCents: 1000,
     status: 'CREATED',
     gateway: 'PAYFAST',
@@ -166,7 +168,7 @@ describe('PaymentsService', () => {
     expect(service).toBeDefined();
   });
 
-  it('computes fee/net and clamps fee to amount', async () => {
+  it('computes added-on-top fees and preserves the merchant base amount', async () => {
     prisma.merchant.findUnique.mockResolvedValue({
       ...merchantBase,
       payfastMerchantId: 'pf-mid',
@@ -177,9 +179,11 @@ describe('PaymentsService', () => {
     });
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
-      amountCents: 1000,
-      platformFeeCents: 1000,
-      merchantNetCents: 0,
+      baseAmountCents: 1000,
+      amountCents: 3700,
+      platformFeeCents: 2700,
+      merchantNetCents: 1000,
+      providerFeeCents: null,
       gateway: 'PAYFAST',
     });
 
@@ -192,13 +196,17 @@ describe('PaymentsService', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
-          platformFeeCents: 1000,
-          merchantNetCents: 0,
+          baseAmountCents: 1000,
+          amountCents: 3700,
+          platformFeeCents: 2700,
+          merchantNetCents: 1000,
         }),
       }),
     );
-    expect(result.platformFeeCents).toBe(1000);
-    expect(result.merchantNetCents).toBe(0);
+    expect(result.amountCents).toBe(3700);
+    expect(result.baseAmountCents).toBe(1000);
+    expect(result.platformFeeCents).toBe(2700);
+    expect(result.merchantNetCents).toBe(1000);
   });
 
   it('clamps negative computed fee to zero', async () => {
@@ -212,9 +220,11 @@ describe('PaymentsService', () => {
     });
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
+      baseAmountCents: 1000,
       amountCents: 1000,
       platformFeeCents: 0,
       merchantNetCents: 1000,
+      providerFeeCents: null,
       gateway: 'PAYFAST',
     });
 
@@ -227,6 +237,8 @@ describe('PaymentsService', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          baseAmountCents: 1000,
+          amountCents: 1000,
           platformFeeCents: 0,
           merchantNetCents: 1000,
         }),
@@ -258,9 +270,11 @@ describe('PaymentsService', () => {
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
       reference: 'INV-FIXED-FEE',
-      amountCents: 1000,
+      baseAmountCents: 1000,
+      amountCents: 1125,
       platformFeeCents: 125,
-      merchantNetCents: 875,
+      merchantNetCents: 1000,
+      providerFeeCents: null,
       gateway: 'PAYSTACK',
     });
 
@@ -274,13 +288,17 @@ describe('PaymentsService', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          baseAmountCents: 1000,
+          amountCents: 1125,
           platformFeeCents: 125,
-          merchantNetCents: 875,
+          merchantNetCents: 1000,
         }),
       }),
     );
     expect(result.platformFeeCents).toBe(125);
-    expect(result.merchantNetCents).toBe(875);
+    expect(result.baseAmountCents).toBe(1000);
+    expect(result.amountCents).toBe(1125);
+    expect(result.merchantNetCents).toBe(1000);
     expect(result.platformFeeRuleType).toBe('FIXED');
     expect(result.platformFeeSource).toBe('platform_default');
     expect(result.routingMode).toBe('STRICT_PRIORITY');
@@ -309,9 +327,11 @@ describe('PaymentsService', () => {
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
       reference: 'INV-PERCENT-FEE',
-      amountCents: 2000,
+      baseAmountCents: 2000,
+      amountCents: 2050,
       platformFeeCents: 50,
-      merchantNetCents: 1950,
+      merchantNetCents: 2000,
+      providerFeeCents: null,
       gateway: 'PAYSTACK',
     });
 
@@ -325,13 +345,17 @@ describe('PaymentsService', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          baseAmountCents: 2000,
+          amountCents: 2050,
           platformFeeCents: 50,
-          merchantNetCents: 1950,
+          merchantNetCents: 2000,
         }),
       }),
     );
     expect(result.platformFeeCents).toBe(50);
-    expect(result.merchantNetCents).toBe(1950);
+    expect(result.baseAmountCents).toBe(2000);
+    expect(result.amountCents).toBe(2050);
+    expect(result.merchantNetCents).toBe(2000);
     expect(result.platformFeeRuleType).toBe('PERCENTAGE');
   });
 
@@ -365,9 +389,11 @@ describe('PaymentsService', () => {
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
       reference: 'INV-AUTO-FEE',
-      amountCents: 2000,
+      baseAmountCents: 2000,
+      amountCents: 2100,
       platformFeeCents: 100,
-      merchantNetCents: 1900,
+      merchantNetCents: 2000,
+      providerFeeCents: null,
       gateway: 'PAYSTACK',
     });
 
@@ -381,8 +407,10 @@ describe('PaymentsService', () => {
     expect(prisma.payment.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({
+          baseAmountCents: 2000,
+          amountCents: 2100,
           platformFeeCents: 100,
-          merchantNetCents: 1900,
+          merchantNetCents: 2000,
         }),
       }),
     );
@@ -391,7 +419,9 @@ describe('PaymentsService', () => {
     expect(result.routingSelectionMode).toBe('auto');
     expect(result.platformFeeRuleType).toBe('FIXED_PLUS_PERCENTAGE');
     expect(result.platformFeeSource).toBe('platform_default');
-    expect(result.merchantNetCents).toBe(1900);
+    expect(result.baseAmountCents).toBe(2000);
+    expect(result.amountCents).toBe(2100);
+    expect(result.merchantNetCents).toBe(2000);
   });
 
   it('reflects merchant plan fee and routing metadata during payment creation', async () => {
@@ -425,9 +455,11 @@ describe('PaymentsService', () => {
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,
       reference: 'INV-SCALE-PLAN',
-      amountCents: 4000,
+      baseAmountCents: 4000,
+      amountCents: 4010,
       platformFeeCents: 10,
-      merchantNetCents: 3990,
+      merchantNetCents: 4000,
+      providerFeeCents: null,
       gateway: 'PAYSTACK',
     });
 
@@ -733,7 +765,9 @@ describe('PaymentsService', () => {
   it('falls back to Yoco when Ozow initialization fails in the EFT-biased AUTO path', async () => {
     jest
       .spyOn(ozowGateway, 'createPayment')
-      .mockRejectedValueOnce(new Error('temporary Ozow initialization failure'));
+      .mockRejectedValueOnce(
+        new Error('temporary Ozow initialization failure'),
+      );
 
     fetchMock.mockResolvedValue({
       ok: true,
@@ -852,9 +886,10 @@ describe('PaymentsService', () => {
     jest
       .spyOn(service, 'recordSuccessfulPaymentLedgerByPaymentId')
       .mockResolvedValue({ ok: true } as never);
-    jest
-      .spyOn(service, 'fulfillPaidSignupPayment')
-      .mockResolvedValue({ fulfilled: false, reason: 'not_signup_payment' } as never);
+    jest.spyOn(service, 'fulfillPaidSignupPayment').mockResolvedValue({
+      fulfilled: false,
+      reason: 'not_signup_payment',
+    } as never);
 
     const result = await service.getPaystackPaymentStatus(
       'm-1',
@@ -889,7 +924,11 @@ describe('PaymentsService', () => {
       checkoutToken: 'checkout-token-paystack',
       merchantId: 'm-1',
       reference: 'INV-HOSTED-PAYSTACK',
+      baseAmountCents: 7500,
       amountCents: 9900,
+      platformFeeCents: 2400,
+      providerFeeCents: null,
+      merchantNetCents: 7500,
       currency: 'ZAR',
       status: 'CREATED',
       description: 'Hosted checkout payment',
@@ -904,7 +943,17 @@ describe('PaymentsService', () => {
       merchant: {
         name: 'Stackaura Labs',
       },
-      attempts: [],
+      attempts: [
+        {
+          redirectUrl: 'https://checkout.paystack.com/pay/abc123',
+          gateway: 'PAYSTACK',
+          rawGateway: {
+            request: {
+              redirectUrl: 'https://checkout.paystack.com/pay/abc123',
+            },
+          },
+        },
+      ],
     });
     prisma.merchant.findUnique.mockResolvedValueOnce({
       ...merchantBase,
@@ -928,6 +977,10 @@ describe('PaymentsService', () => {
         }),
       ]),
     );
+    expect(result.baseAmountCents).toBe(7500);
+    expect(result.platformFeeCents).toBe(2400);
+    expect(result.amountCents).toBe(9900);
+    expect(result.redirectUrl).toBe('https://checkout.paystack.com/pay/abc123');
   });
 
   it('reconciles Yoco webhook-derived success state to PAID', async () => {
@@ -978,9 +1031,10 @@ describe('PaymentsService', () => {
     jest
       .spyOn(service, 'recordSuccessfulPaymentLedgerByPaymentId')
       .mockResolvedValue({ ok: true } as never);
-    jest
-      .spyOn(service, 'fulfillPaidSignupPayment')
-      .mockResolvedValue({ fulfilled: false, reason: 'not_signup_payment' } as never);
+    jest.spyOn(service, 'fulfillPaidSignupPayment').mockResolvedValue({
+      fulfilled: false,
+      reason: 'not_signup_payment',
+    } as never);
     merchantsService.ensureInitialApiKey.mockResolvedValue({
       created: false,
       apiKey: null,
@@ -1050,7 +1104,10 @@ describe('PaymentsService', () => {
     });
     prisma.payment.update.mockResolvedValue({ id: 'p-1' });
 
-    const result = await service.getYocoPaymentStatus('m-1', 'INV-YOCO-EXPIRED');
+    const result = await service.getYocoPaymentStatus(
+      'm-1',
+      'INV-YOCO-EXPIRED',
+    );
 
     expect(prisma.payment.update).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1310,7 +1367,6 @@ describe('PaymentsService', () => {
     );
   });
 
-
   it('cancels the superseded Yoco attempt when hosted checkout switches explicitly to Ozow', async () => {
     prisma.payment.findFirst.mockResolvedValue({
       id: 'p-switch',
@@ -1354,7 +1410,10 @@ describe('PaymentsService', () => {
     });
     prisma.paymentAttempt.updateMany.mockResolvedValue({ count: 1 });
 
-    const result = await service.continueHostedCheckout('checkout-switch', 'OZOW');
+    const result = await service.continueHostedCheckout(
+      'checkout-switch',
+      'OZOW',
+    );
 
     expect(prisma.paymentAttempt.updateMany).toHaveBeenCalledWith({
       where: {
@@ -1383,7 +1442,9 @@ describe('PaymentsService', () => {
     );
     expect(result.gateway).toBe('OZOW');
     expect(result.redirectForm?.action).toBe('https://pay.ozow.com');
-    expect(result.redirectForm?.fields.SuccessUrl).toContain('reference=INV-SWITCH');
+    expect(result.redirectForm?.fields.SuccessUrl).toContain(
+      'reference=INV-SWITCH',
+    );
   });
 
   it('maps public signup payload into an Ozow payment with defaults', async () => {
@@ -1395,16 +1456,14 @@ describe('PaymentsService', () => {
       },
       apiKey: null,
     });
-    prisma.merchant.findUnique
-      .mockResolvedValueOnce(null)
-      .mockResolvedValue({
-        ...merchantBase,
-        id: 'm-signup',
-        ozowSiteCode: 'SC-1',
-        ozowPrivateKey: 'oz-private',
-        ozowApiKey: 'oz-api',
-        gatewayOrder: ['OZOW'],
-      });
+    prisma.merchant.findUnique.mockResolvedValueOnce(null).mockResolvedValue({
+      ...merchantBase,
+      id: 'm-signup',
+      ozowSiteCode: 'SC-1',
+      ozowPrivateKey: 'oz-private',
+      ozowApiKey: 'oz-api',
+      gatewayOrder: ['OZOW'],
+    });
     prisma.payment.findFirst.mockResolvedValue(null);
     prisma.payment.create.mockResolvedValue({
       ...paymentBase,

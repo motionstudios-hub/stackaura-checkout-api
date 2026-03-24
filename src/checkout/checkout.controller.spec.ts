@@ -75,7 +75,9 @@ describe('CheckoutController', () => {
 
     expect(status).toHaveBeenCalledWith(200);
     expect(type).toHaveBeenCalledWith('html');
-    expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment cancelled'));
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Payment cancelled'),
+    );
     expect(send).toHaveBeenCalledWith(expect.stringContaining('INV-1'));
   });
 
@@ -101,7 +103,9 @@ describe('CheckoutController', () => {
 
     expect(status).toHaveBeenCalledWith(200);
     expect(type).toHaveBeenCalledWith('html');
-    expect(send).toHaveBeenCalledWith(expect.stringContaining('Payment failed'));
+    expect(send).toHaveBeenCalledWith(
+      expect.stringContaining('Payment failed'),
+    );
     expect(send).toHaveBeenCalledWith(expect.stringContaining('INV-2'));
   });
 
@@ -272,7 +276,12 @@ describe('CheckoutController', () => {
       checkoutToken: 'checkout-token-1',
       merchantName: 'Stackaura Labs',
       reference: 'INV-CHECKOUT-1',
+      baseAmountCents: 7500,
       amountCents: 9900,
+      chargeAmountCents: 9900,
+      platformFeeCents: 2400,
+      providerFeeCents: null,
+      merchantNetCents: 7500,
       currency: 'ZAR',
       status: 'CREATED',
       description: 'Premium infrastructure payment',
@@ -286,7 +295,8 @@ describe('CheckoutController', () => {
         {
           value: 'AUTO',
           label: 'Auto',
-          description: 'Let Stackaura pick the best available rail for this payment.',
+          description:
+            'Let Stackaura pick the best available rail for this payment.',
           detail: 'Stackaura will start with Yoco.',
           available: true,
           selected: true,
@@ -352,14 +362,64 @@ describe('CheckoutController', () => {
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('INV-CHECKOUT-1'),
     );
-    expect(send).toHaveBeenCalledWith(
-      expect.stringContaining('value="YOCO"'),
-    );
-    expect(send).toHaveBeenCalledWith(
-      expect.stringContaining('value="OZOW"'),
-    );
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Base amount'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Stackaura fee'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('Total charged'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('value="YOCO"'));
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('value="OZOW"'));
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('value="PAYSTACK"'),
+    );
+  });
+
+  it('returns JSON checkout context for the Next.js hosted checkout bridge', async () => {
+    paymentsService.getHostedCheckoutPageContext.mockResolvedValue({
+      checkoutToken: 'checkout-token-json',
+      merchantName: 'Stackaura Labs',
+      reference: 'INV-CHECKOUT-JSON',
+      baseAmountCents: 500,
+      amountCents: 750,
+      chargeAmountCents: 750,
+      platformFeeCents: 250,
+      providerFeeCents: null,
+      merchantNetCents: 500,
+      currency: 'ZAR',
+      status: 'CREATED',
+      description: 'Fee-bearing payment',
+      customerEmail: 'buyer@example.com',
+      expiresAt: new Date('2026-03-19T10:15:00.000Z'),
+      currentGateway: 'PAYSTACK',
+      redirectUrl: 'https://paystack.example/redirect',
+      redirectForm: null,
+      redirectMethod: 'GET',
+      selectedGateway: 'AUTO',
+      selectionLocked: false,
+      recommendedGateway: 'PAYSTACK',
+      gatewayOptions: [],
+    });
+
+    const json = jest.fn();
+    const status = jest.fn().mockReturnValue({ json });
+    const res = {
+      status,
+      json,
+    } as unknown as Response;
+
+    await controller.getCheckout(
+      'checkout-token-json',
+      res,
+      'application/json',
+    );
+
+    expect(status).toHaveBeenCalledWith(200);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reference: 'INV-CHECKOUT-JSON',
+        baseAmountCents: 500,
+        amountCents: 750,
+        platformFeeCents: 250,
+        redirectUrl: 'https://paystack.example/redirect',
+      }),
     );
   });
 
@@ -368,7 +428,12 @@ describe('CheckoutController', () => {
       checkoutToken: 'checkout-token-low',
       merchantName: 'Stackaura Labs',
       reference: 'INV-LOW-1',
+      baseAmountCents: 150,
       amountCents: 150,
+      chargeAmountCents: 150,
+      platformFeeCents: 0,
+      providerFeeCents: null,
+      merchantNetCents: 150,
       currency: 'ZAR',
       status: 'CREATED',
       description: 'Low amount payment',
@@ -382,7 +447,8 @@ describe('CheckoutController', () => {
         {
           value: 'AUTO',
           label: 'Auto',
-          description: 'Let Stackaura pick the best available rail for this payment.',
+          description:
+            'Let Stackaura pick the best available rail for this payment.',
           detail: 'Stackaura will start with Ozow.',
           available: true,
           selected: true,
@@ -446,7 +512,12 @@ describe('CheckoutController', () => {
       checkoutToken: 'checkout-token-paystack',
       merchantName: 'Stackaura Labs',
       reference: 'INV-PAYSTACK-HOSTED',
+      baseAmountCents: 7500,
       amountCents: 9900,
+      chargeAmountCents: 9900,
+      platformFeeCents: 2400,
+      providerFeeCents: null,
+      merchantNetCents: 7500,
       currency: 'ZAR',
       status: 'CREATED',
       description: 'Premium infrastructure payment',
@@ -460,7 +531,8 @@ describe('CheckoutController', () => {
         {
           value: 'AUTO',
           label: 'Auto',
-          description: 'Let Stackaura pick the best available rail for this payment.',
+          description:
+            'Let Stackaura pick the best available rail for this payment.',
           detail: 'Stackaura will start with Yoco.',
           available: true,
           selected: false,
@@ -518,7 +590,9 @@ describe('CheckoutController', () => {
       expect.stringContaining('Current rail <strong>Paystack</strong>'),
     );
     expect(send).toHaveBeenCalledWith(
-      expect.stringContaining('Selected <strong id="selected-gateway-pill">Paystack</strong>'),
+      expect.stringContaining(
+        'Selected <strong id="selected-gateway-pill">Paystack</strong>',
+      ),
     );
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('value="PAYSTACK"'),
@@ -577,9 +651,7 @@ describe('CheckoutController', () => {
     expect(send).toHaveBeenCalledWith(
       expect.stringContaining('Redirecting to Ozow'),
     );
-    expect(send).toHaveBeenCalledWith(
-      expect.stringContaining('form.submit()'),
-    );
+    expect(send).toHaveBeenCalledWith(expect.stringContaining('form.submit()'));
   });
 
   it('redirects directly for Paystack checkout continuation', async () => {

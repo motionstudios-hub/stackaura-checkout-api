@@ -17,7 +17,9 @@ export type ResolvedPlatformFeePolicy = {
 };
 
 export type PlatformFeeBreakdown = {
+  baseAmountCents: number;
   platformFeeCents: number;
+  chargeAmountCents: number;
   merchantNetCents: number;
 };
 
@@ -68,10 +70,7 @@ type MerchantPlanResolverSource = PlatformFeePolicySource & {
   merchantPlanCode?: string | null;
 };
 
-type PlanFeatureSet = Omit<
-  RoutingPlanFeatures,
-  'planCode' | 'source'
->;
+type PlanFeatureSet = Omit<RoutingPlanFeatures, 'planCode' | 'source'>;
 
 const BUILTIN_PLAN_FEATURES: Record<MerchantPlanCode, PlanFeatureSet> = {
   starter: {
@@ -208,7 +207,9 @@ function resolvePlatformDefaultFeePolicy(): ResolvedPlatformFeePolicy {
 function resolveMerchantOverrideFeePolicy(
   source: PlatformFeePolicySource,
 ): ResolvedPlatformFeePolicy | null {
-  const fixedFeeCents = normalizeFeeComponent(source.merchantPlatformFeeFixedCents);
+  const fixedFeeCents = normalizeFeeComponent(
+    source.merchantPlatformFeeFixedCents,
+  );
   const percentageBps = normalizeFeeComponent(source.merchantPlatformFeeBps);
 
   if (fixedFeeCents <= 0 && percentageBps <= 0) {
@@ -265,7 +266,8 @@ export function resolvePlatformFeePolicy(
   source: PlatformFeePolicySource = {},
 ): ResolvedPlatformFeePolicy {
   return (
-    resolveMerchantOverrideFeePolicy(source) ?? resolvePlatformDefaultFeePolicy()
+    resolveMerchantOverrideFeePolicy(source) ??
+    resolvePlatformDefaultFeePolicy()
   );
 }
 
@@ -273,21 +275,22 @@ export function computePlatformFeeBreakdown(args: {
   amountCents: number;
   policy: ResolvedPlatformFeePolicy;
 }): PlatformFeeBreakdown {
-  const amountCents = Number.isFinite(args.amountCents)
+  const baseAmountCents = Number.isFinite(args.amountCents)
     ? Math.max(0, Math.trunc(args.amountCents))
     : 0;
   const fixedFeeCents = normalizeFeeComponent(args.policy.fixedFeeCents);
   const percentageBps = normalizeFeeComponent(args.policy.percentageBps);
-  const variableFeeCents = Math.round((amountCents * percentageBps) / 10000);
-  const unclampedPlatformFeeCents = fixedFeeCents + variableFeeCents;
-  const platformFeeCents = Math.max(
-    0,
-    Math.min(amountCents, unclampedPlatformFeeCents),
+  const variableFeeCents = Math.round(
+    (baseAmountCents * percentageBps) / 10000,
   );
+  const platformFeeCents = Math.max(0, fixedFeeCents + variableFeeCents);
+  const chargeAmountCents = baseAmountCents + platformFeeCents;
 
   return {
+    baseAmountCents,
     platformFeeCents,
-    merchantNetCents: amountCents - platformFeeCents,
+    chargeAmountCents,
+    merchantNetCents: baseAmountCents,
   };
 }
 
@@ -301,8 +304,7 @@ export function resolveRoutingPlanFeatures(): RoutingPlanFeatures {
       true,
     autoRouting:
       parseBooleanEnv(process.env.STACKAURA_FEATURE_AUTO_ROUTING) ?? true,
-    fallback:
-      parseBooleanEnv(process.env.STACKAURA_FEATURE_FALLBACK) ?? true,
+    fallback: parseBooleanEnv(process.env.STACKAURA_FEATURE_FALLBACK) ?? true,
     source: 'platform_default',
   };
 }
@@ -361,9 +363,7 @@ function formatPerTransaction(policy: ResolvedPlatformFeePolicy) {
   return `${parts.join(' + ')} / transaction`;
 }
 
-function buildPublicPricingPlan(
-  code: MerchantPlanCode,
-): PublicPricingPlan {
+function buildPublicPricingPlan(code: MerchantPlanCode): PublicPricingPlan {
   const resolvedPlan = resolveMerchantPlan({ merchantPlanCode: code });
   const perTransaction = formatPerTransaction(resolvedPlan.feePolicy);
 
