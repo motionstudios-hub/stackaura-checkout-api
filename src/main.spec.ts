@@ -1,5 +1,9 @@
 import { SwaggerModule } from '@nestjs/swagger';
-import { isSwaggerEnabled, setupSwagger } from './main';
+import {
+  assertSessionSecretPolicy,
+  isSwaggerEnabled,
+  setupSwagger,
+} from './main';
 
 describe('main swagger bootstrap', () => {
   afterEach(() => {
@@ -18,6 +22,17 @@ describe('main swagger bootstrap', () => {
         SWAGGER_ENABLED: 'true',
       }),
     ).toBe(true);
+  });
+
+  it('requires SESSION_SECRET for production bootstrapping', () => {
+    expect(() => assertSessionSecretPolicy({} as NodeJS.ProcessEnv)).toThrow(
+      'SESSION_SECRET is required',
+    );
+    expect(() =>
+      assertSessionSecretPolicy({
+        SESSION_SECRET: 'stackaura-prod-session-secret',
+      }),
+    ).not.toThrow();
   });
 
   it('setupSwagger does not throw and registers docs endpoints', () => {

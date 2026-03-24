@@ -31,8 +31,17 @@ export class AuthService {
     return ttlDays * 24 * 60 * 60 * 1000;
   }
 
+  private resolveSessionSecret() {
+    const secret = process.env.SESSION_SECRET?.trim();
+    if (!secret) {
+      throw new Error('SESSION_SECRET is required');
+    }
+
+    return secret;
+  }
+
   private signSession(userId: string, expiresAt: number) {
-    const secret = process.env.SESSION_SECRET ?? 'dev-secret';
+    const secret = this.resolveSessionSecret();
     const payload = `${userId}.${expiresAt}`;
     const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
     return `${payload}.${sig}`;
@@ -49,7 +58,7 @@ export class AuthService {
     if (!userId || !expiresAt || Number.isNaN(expiresAt)) return null;
     if (Date.now() > expiresAt) return null;
 
-    const secret = process.env.SESSION_SECRET ?? 'dev-secret';
+    const secret = this.resolveSessionSecret();
     const payload = `${userId}.${expiresAt}`;
     const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
 

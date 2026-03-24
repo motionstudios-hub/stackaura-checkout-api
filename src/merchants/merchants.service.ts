@@ -22,6 +22,7 @@ import {
   resolveMerchantPlan,
 } from '../payments/monetization.config';
 import { PrismaService } from '../prisma/prisma.service';
+import { decryptStoredSecret, encryptStoredSecret } from '../security/secrets';
 import * as argon2 from 'argon2';
 import crypto from 'crypto';
 
@@ -56,6 +57,15 @@ export class MerchantsService {
   async listMerchants() {
     try {
       const merchants = await this.prisma.merchant.findMany({
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+          planCode: true,
+        },
         orderBy: { createdAt: 'desc' },
       });
 
@@ -859,10 +869,9 @@ export class MerchantsService {
     const updated = await this.prisma.merchant.update({
       where: { id },
       data: {
-        // TODO: Encrypt PayFast credentials at rest when encryption helpers are available.
         payfastMerchantId,
-        payfastMerchantKey,
-        payfastPassphrase: passphrase,
+        payfastMerchantKey: encryptStoredSecret(payfastMerchantKey),
+        payfastPassphrase: encryptStoredSecret(passphrase),
         payfastIsSandbox: isSandbox,
       },
       select: {
@@ -920,10 +929,9 @@ export class MerchantsService {
       if (!merchant) throw new NotFoundException('Merchant not found');
 
       const updateData: Prisma.MerchantUpdateInput = {
-        // TODO: Encrypt Ozow credentials at rest when encryption helpers are available.
         ozowSiteCode,
-        ozowPrivateKey,
-        ozowApiKey,
+        ozowPrivateKey: encryptStoredSecret(ozowPrivateKey),
+        ozowApiKey: encryptStoredSecret(ozowApiKey),
       };
       if (body?.testMode !== undefined) {
         updateData.ozowIsTest = body.testMode;
@@ -988,17 +996,22 @@ export class MerchantsService {
 
       const merchant = await this.prisma.merchant.findUnique({
         where: { id },
-      select: {
-        id: true,
-        yocoTestMode: true,
-        yocoPublicKey: true,
-        yocoSecretKey: true,
-        yocoWebhookId: true,
-        yocoWebhookSecret: true,
-        yocoWebhookUrl: true,
-      },
-    });
-    if (!merchant) throw new NotFoundException('Merchant not found');
+        select: {
+          id: true,
+          yocoTestMode: true,
+          yocoPublicKey: true,
+          yocoSecretKey: true,
+          yocoWebhookId: true,
+          yocoWebhookSecret: true,
+          yocoWebhookUrl: true,
+        },
+      });
+      if (!merchant) throw new NotFoundException('Merchant not found');
+
+      const storedYocoSecretKey = decryptStoredSecret(merchant.yocoSecretKey);
+      const storedYocoWebhookSecret = decryptStoredSecret(
+        merchant.yocoWebhookSecret,
+      );
 
       const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
       const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
@@ -1023,7 +1036,7 @@ export class MerchantsService {
       const desiredWebhookUrl = this.yocoGateway.resolveWebhookUrl();
       const credentialsChanged =
         merchant.yocoPublicKey !== yocoPublicKey ||
-        merchant.yocoSecretKey !== yocoSecretKey ||
+        storedYocoSecretKey !== yocoSecretKey ||
         merchant.yocoTestMode !== yocoTestMode;
 
       const hasReusableWebhook =
@@ -1036,7 +1049,7 @@ export class MerchantsService {
         hasReusableWebhook
           ? {
               id: merchant.yocoWebhookId?.trim() ?? null,
-              secret: merchant.yocoWebhookSecret?.trim() ?? null,
+              secret: storedYocoWebhookSecret,
               url: merchant.yocoWebhookUrl?.trim() ?? desiredWebhookUrl,
             }
           : await this.registerYocoWebhook({
@@ -1050,12 +1063,11 @@ export class MerchantsService {
       const updated = await this.prisma.merchant.update({
         where: { id },
         data: {
-          // TODO: Encrypt Yoco credentials at rest when encryption helpers are available.
           yocoPublicKey,
-          yocoSecretKey,
+          yocoSecretKey: encryptStoredSecret(yocoSecretKey),
           yocoTestMode,
           yocoWebhookId: webhook.id,
-          yocoWebhookSecret: webhook.secret,
+          yocoWebhookSecret: encryptStoredSecret(webhook.secret),
           yocoWebhookUrl: webhook.url,
         },
         select: {
@@ -1138,7 +1150,7 @@ export class MerchantsService {
       const updated = await this.prisma.merchant.update({
         where: { id },
         data: {
-          paystackSecretKey,
+          paystackSecretKey: encryptStoredSecret(paystackSecretKey),
           paystackTestMode,
         },
         select: {
@@ -1400,8 +1412,10 @@ export class MerchantsService {
     updatedAt: Date;
   }) {
     const siteCode = merchant.ozowSiteCode?.trim() || null;
-    const hasPrivateKey = Boolean(merchant.ozowPrivateKey?.trim());
-    const hasApiKey = Boolean(merchant.ozowApiKey?.trim());
+    const ozowPrivateKey = decryptStoredSecret(merchant.ozowPrivateKey);
+    const ozowApiKey = decryptStoredSecret(merchant.ozowApiKey);
+    const hasPrivateKey = Boolean(ozowPrivateKey?.trim());
+    const hasApiKey = Boolean(ozowApiKey?.trim());
     const configured = Boolean(siteCode && hasPrivateKey);
     const connected = Boolean(siteCode && hasPrivateKey && hasApiKey);
     const hasAnySavedState = Boolean(
@@ -1442,8 +1456,10 @@ export class MerchantsService {
     yocoWebhookUrl?: string | null;
     updatedAt: Date;
   }) {
+    const yocoSecretKey = decryptStoredSecret(merchant.yocoSecretKey);
+    const yocoWebhookSecret = decryptStoredSecret(merchant.yocoWebhookSecret);
     const hasPublicKey = Boolean(merchant.yocoPublicKey?.trim());
-    const hasSecretKey = Boolean(merchant.yocoSecretKey?.trim());
+    const hasSecretKey = Boolean(yocoSecretKey?.trim());
     const connected = hasPublicKey && hasSecretKey;
     const hasAnySavedState = Boolean(
       hasPublicKey || hasSecretKey || merchant.yocoTestMode !== null,
@@ -1453,7 +1469,7 @@ export class MerchantsService {
     try {
       testMode = resolveYocoConfig({
         yocoPublicKey: merchant.yocoPublicKey,
-        yocoSecretKey: merchant.yocoSecretKey,
+        yocoSecretKey,
         yocoTestMode: merchant.yocoTestMode,
       }).testMode;
     } catch {
@@ -1467,7 +1483,7 @@ export class MerchantsService {
       hasSecretKey,
       testMode,
       webhookConfigured: Boolean(
-        merchant.yocoWebhookSecret?.trim() && merchant.yocoWebhookUrl?.trim(),
+        yocoWebhookSecret?.trim() && merchant.yocoWebhookUrl?.trim(),
       ),
       updatedAt: hasAnySavedState ? merchant.updatedAt.toISOString() : null,
     };
@@ -1479,7 +1495,8 @@ export class MerchantsService {
     paystackTestMode: boolean | null;
     updatedAt: Date;
   }) {
-    const hasSecretKey = Boolean(merchant.paystackSecretKey?.trim());
+    const paystackSecretKey = decryptStoredSecret(merchant.paystackSecretKey);
+    const hasSecretKey = Boolean(paystackSecretKey?.trim());
     const hasAnySavedState = Boolean(
       hasSecretKey || merchant.paystackTestMode !== null,
     );
@@ -1487,7 +1504,7 @@ export class MerchantsService {
     let testMode = merchant.paystackTestMode ?? false;
     try {
       testMode = resolvePaystackConfig({
-        paystackSecretKey: merchant.paystackSecretKey,
+        paystackSecretKey,
         paystackTestMode: merchant.paystackTestMode,
       }).testMode;
     } catch {

@@ -33,6 +33,7 @@ import { mapYocoEventToPaymentStatus } from '../gateways/yoco.lifecycle';
 import { canTransitionPaymentStatus } from '../payments/payment-status.transitions';
 import { PrismaService } from '../prisma/prisma.service';
 import { PaymentsService } from '../payments/payments.service';
+import { decryptStoredSecret } from '../security/secrets';
 
 type PayfastPayload = Record<string, string | string[]>;
 type NormalizedPayfastPayload = Record<string, string>;
@@ -139,9 +140,12 @@ export class WebhooksService {
       return { ok: true };
     }
 
+    const payfastPassphrase = decryptStoredSecret(
+      payment.merchant.payfastPassphrase,
+    );
     this.assertPayfastSignature(
       normalized,
-      payment.merchant.payfastPassphrase ?? null,
+      payfastPassphrase,
       meta.rawBody,
     );
     await this.verifyPayfastPostback(
@@ -264,10 +268,12 @@ export class WebhooksService {
       return { ok: true };
     }
 
+    const ozowPrivateKey = decryptStoredSecret(payment.merchant.ozowPrivateKey);
+    const ozowApiKey = decryptStoredSecret(payment.merchant.ozowApiKey);
     const ozowConfig = resolveOzowConfig({
       ozowSiteCode: payment.merchant.ozowSiteCode,
-      ozowPrivateKey: payment.merchant.ozowPrivateKey,
-      ozowApiKey: payment.merchant.ozowApiKey,
+      ozowPrivateKey,
+      ozowApiKey,
       ozowIsTest: payment.merchant.ozowIsTest,
     });
 
@@ -448,7 +454,7 @@ export class WebhooksService {
     }
 
     const paystackConfig = resolvePaystackConfig({
-      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackSecretKey: decryptStoredSecret(payment.merchant.paystackSecretKey),
       paystackTestMode: payment.merchant.paystackTestMode,
     });
     const secretKey = paystackConfig.secretKey?.trim() || null;
@@ -632,7 +638,7 @@ export class WebhooksService {
     }
 
     const webhookSecret =
-      payment.merchant.yocoWebhookSecret?.trim() ||
+      decryptStoredSecret(payment.merchant.yocoWebhookSecret)?.trim() ||
       process.env.YOCO_WEBHOOK_SECRET?.trim() ||
       null;
     if (!webhookSecret) {

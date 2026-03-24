@@ -64,6 +64,50 @@ describe('MerchantsController', () => {
     expect(controller).toBeDefined();
   });
 
+  it('lists only signed-in merchant memberships without touching secret fields', async () => {
+    const req = {
+      sessionAuth: {
+        user: { id: 'u-1', email: 'owner@example.com' },
+        memberships: [
+          {
+            id: 'mem-1',
+            role: 'OWNER',
+            merchant: {
+              id: 'm-1',
+              name: 'Merchant One',
+              email: 'merchant@example.com',
+              isActive: true,
+              planCode: 'growth',
+              plan: {
+                code: 'growth',
+                manualGatewaySelection: true,
+                autoRouting: true,
+                fallback: true,
+              },
+            },
+          },
+        ],
+      },
+    };
+
+    await expect(controller.list(req as never)).resolves.toEqual([
+      {
+        id: 'm-1',
+        name: 'Merchant One',
+        email: 'merchant@example.com',
+        isActive: true,
+        role: 'OWNER',
+        planCode: 'growth',
+        plan: {
+          code: 'growth',
+          manualGatewaySelection: true,
+          autoRouting: true,
+          fallback: true,
+        },
+      },
+    ]);
+  });
+
   it('returns merchant analytics for a signed-in member of that merchant workspace', async () => {
     authService.resolveSession.mockResolvedValue({
       user: { id: 'u-1', email: 'owner@example.com' },

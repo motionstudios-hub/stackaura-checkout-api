@@ -149,6 +149,55 @@ Safety rule in code:
 - `PAYFAST_VERIFY_POSTBACK=false` is allowed only when `NODE_ENV !== production`
 - In production, `PAYFAST_VERIFY_POSTBACK=false` causes ITN processing to fail closed
 
+## Merchant secret migration
+
+Stackaura now encrypts merchant gateway credentials at rest. New writes are encrypted automatically, and legacy plaintext values should be migrated before broad launch.
+
+Fields covered:
+
+- `payfastMerchantKey`
+- `payfastPassphrase`
+- `ozowPrivateKey`
+- `ozowApiKey`
+- `yocoSecretKey`
+- `yocoWebhookSecret`
+- `paystackSecretKey`
+
+Required production env before running the migration:
+
+- `DATABASE_URL`
+- `CREDENTIALS_ENCRYPTION_SECRET`
+
+Dry run:
+
+```bash
+npm run merchant-secrets:migrate:dry-run
+```
+
+Apply the migration with a secure backup file:
+
+```bash
+npm run merchant-secrets:migrate -- --apply --backup-file=/secure/path/merchant-secret-backup.json
+```
+
+Verify that no plaintext merchant gateway secrets remain:
+
+```bash
+npm run merchant-secrets:verify
+```
+
+Rollback from a captured backup file:
+
+```bash
+ts-node src/scripts/migrate-merchant-secrets.ts --rollback-file=/secure/path/merchant-secret-backup.json
+```
+
+Operational notes:
+
+- Treat the backup file as sensitive because it contains the original secret values.
+- Store the backup outside the repo, restrict access, and delete it after verification.
+- Take a database snapshot before the apply step so rollback can use either the backup file or the database snapshot.
+
 ## Merchant webhook deliveries
 
 Webhook delivery is queue-based with retries. Delivery rows include:

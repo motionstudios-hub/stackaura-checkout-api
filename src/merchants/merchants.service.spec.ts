@@ -2,6 +2,10 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from './merchants.service';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  decryptStoredSecret,
+  isEncryptedSecret,
+} from '../security/secrets';
 
 describe('MerchantsService', () => {
   let service: MerchantsService;
@@ -111,14 +115,26 @@ describe('MerchantsService', () => {
     expect(prisma.merchant.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'm-1' },
-        data: {
+        data: expect.objectContaining({
           ozowSiteCode: 'SC-1',
-          ozowPrivateKey: 'private-key',
-          ozowApiKey: 'api-key',
+          ozowPrivateKey: expect.any(String),
+          ozowApiKey: expect.any(String),
           ozowIsTest: true,
-        },
+        }),
       }),
     );
+
+    const ozowUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
+      .data as {
+      ozowPrivateKey: string;
+      ozowApiKey: string;
+    };
+    expect(isEncryptedSecret(ozowUpdateData.ozowPrivateKey)).toBe(true);
+    expect(isEncryptedSecret(ozowUpdateData.ozowApiKey)).toBe(true);
+    expect(decryptStoredSecret(ozowUpdateData.ozowPrivateKey)).toBe(
+      'private-key',
+    );
+    expect(decryptStoredSecret(ozowUpdateData.ozowApiKey)).toBe('api-key');
   });
 
   it('returns non-secret Ozow connection state for readback', async () => {
@@ -191,15 +207,28 @@ describe('MerchantsService', () => {
     expect(prisma.merchant.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'm-1' },
-        data: {
+        data: expect.objectContaining({
           yocoPublicKey: 'pk_test_public',
-          yocoSecretKey: 'sk_test_secret',
+          yocoSecretKey: expect.any(String),
           yocoTestMode: true,
           yocoWebhookId: 'sub_yoco_1',
-          yocoWebhookSecret: 'whsec_test_secret',
+          yocoWebhookSecret: expect.any(String),
           yocoWebhookUrl: 'https://api.stackaura.co.za/v1/webhooks/yoco',
-        },
+        }),
       }),
+    );
+    const yocoUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
+      .data as {
+      yocoSecretKey: string;
+      yocoWebhookSecret: string;
+    };
+    expect(isEncryptedSecret(yocoUpdateData.yocoSecretKey)).toBe(true);
+    expect(isEncryptedSecret(yocoUpdateData.yocoWebhookSecret)).toBe(true);
+    expect(decryptStoredSecret(yocoUpdateData.yocoSecretKey)).toBe(
+      'sk_test_secret',
+    );
+    expect(decryptStoredSecret(yocoUpdateData.yocoWebhookSecret)).toBe(
+      'whsec_test_secret',
     );
     expect(yocoGateway.registerWebhookSubscription).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -264,11 +293,20 @@ describe('MerchantsService', () => {
     expect(prisma.merchant.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'm-1' },
-        data: {
-          paystackSecretKey: 'sk_test_secret',
+        data: expect.objectContaining({
+          paystackSecretKey: expect.any(String),
           paystackTestMode: true,
-        },
+        }),
       }),
+    );
+    const paystackUpdateData = (
+      prisma.merchant.update as jest.Mock
+    ).mock.calls[0][0].data as {
+      paystackSecretKey: string;
+    };
+    expect(isEncryptedSecret(paystackUpdateData.paystackSecretKey)).toBe(true);
+    expect(decryptStoredSecret(paystackUpdateData.paystackSecretKey)).toBe(
+      'sk_test_secret',
     );
   });
 
@@ -316,13 +354,26 @@ describe('MerchantsService', () => {
     expect(prisma.merchant.update).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { id: 'm-1' },
-        data: {
+        data: expect.objectContaining({
           payfastMerchantId: '10046276',
-          payfastMerchantKey: 'pf-key',
-          payfastPassphrase: 'pf-pass',
+          payfastMerchantKey: expect.any(String),
+          payfastPassphrase: expect.any(String),
           payfastIsSandbox: false,
-        },
+        }),
       }),
+    );
+    const payfastUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
+      .data as {
+      payfastMerchantKey: string;
+      payfastPassphrase: string;
+    };
+    expect(isEncryptedSecret(payfastUpdateData.payfastMerchantKey)).toBe(true);
+    expect(isEncryptedSecret(payfastUpdateData.payfastPassphrase)).toBe(true);
+    expect(decryptStoredSecret(payfastUpdateData.payfastMerchantKey)).toBe(
+      'pf-key',
+    );
+    expect(decryptStoredSecret(payfastUpdateData.payfastPassphrase)).toBe(
+      'pf-pass',
     );
   });
 

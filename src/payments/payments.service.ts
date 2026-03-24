@@ -56,6 +56,7 @@ import {
   type ResolvedPlatformFeePolicy,
   type RoutingPlanFeatures,
 } from './monetization.config';
+import { decryptStoredSecret } from '../security/secrets';
 
 export type CreatePaymentDto = {
   amountCents: number;
@@ -864,24 +865,33 @@ export class PaymentsService {
 
     if (!merchant) throw new NotFoundException('Merchant not found');
 
+    const payfastMerchantKey = decryptStoredSecret(merchant.payfastMerchantKey);
+    const payfastPassphrase = decryptStoredSecret(merchant.payfastPassphrase);
+    const ozowPrivateKey = decryptStoredSecret(merchant.ozowPrivateKey);
+    const ozowApiKey = decryptStoredSecret(merchant.ozowApiKey);
+    const yocoSecretKey = decryptStoredSecret(merchant.yocoSecretKey);
+    const paystackSecretKey = decryptStoredSecret(merchant.paystackSecretKey);
+
     const ozowConfig = resolveOzowConfig({
       ozowSiteCode: merchant.ozowSiteCode,
-      ozowPrivateKey: merchant.ozowPrivateKey,
-      ozowApiKey: merchant.ozowApiKey,
+      ozowPrivateKey,
+      ozowApiKey,
       ozowIsTest: merchant.ozowIsTest,
     });
     const yocoConfig = resolveYocoConfig({
       yocoPublicKey: merchant.yocoPublicKey,
-      yocoSecretKey: merchant.yocoSecretKey,
+      yocoSecretKey,
       yocoTestMode: merchant.yocoTestMode,
     });
     const paystackConfig = resolvePaystackConfig({
-      paystackSecretKey: merchant.paystackSecretKey,
+      paystackSecretKey,
       paystackTestMode: merchant.paystackTestMode,
     });
 
     return {
       ...merchant,
+      payfastMerchantKey,
+      payfastPassphrase,
       ozowSiteCode: ozowConfig.siteCode,
       ozowPrivateKey: ozowConfig.privateKey,
       ozowApiKey: ozowConfig.apiKey,
@@ -2952,10 +2962,12 @@ export class PaymentsService {
       throw new BadRequestException('Payment is not an Ozow payment');
     }
 
+    const ozowPrivateKey = decryptStoredSecret(payment.merchant.ozowPrivateKey);
+    const ozowApiKey = decryptStoredSecret(payment.merchant.ozowApiKey);
     const ozowConfig = resolveOzowConfig({
       ozowSiteCode: payment.merchant.ozowSiteCode,
-      ozowPrivateKey: payment.merchant.ozowPrivateKey,
-      ozowApiKey: payment.merchant.ozowApiKey,
+      ozowPrivateKey,
+      ozowApiKey,
       ozowIsTest: payment.merchant.ozowIsTest,
     });
     const providerReference =
@@ -3095,8 +3107,11 @@ export class PaymentsService {
     }
 
     const snapshot = this.extractPaystackState(payment.rawGateway);
+    const paystackSecretKey = decryptStoredSecret(
+      payment.merchant.paystackSecretKey,
+    );
     const paystackConfig = resolvePaystackConfig({
-      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackSecretKey,
       paystackTestMode: payment.merchant.paystackTestMode,
     });
     const providerSnapshot: PaystackVerifyStatus =
@@ -3254,9 +3269,10 @@ export class PaymentsService {
     const checkoutId = snapshot.checkoutId ?? payment.gatewayRef;
     if (checkoutId) {
       try {
+        const yocoSecretKey = decryptStoredSecret(payment.merchant.yocoSecretKey);
         const yocoConfig = resolveYocoConfig({
           yocoPublicKey: payment.merchant.yocoPublicKey,
-          yocoSecretKey: payment.merchant.yocoSecretKey,
+          yocoSecretKey,
           yocoTestMode: payment.merchant.yocoTestMode,
         });
 
@@ -3549,21 +3565,23 @@ export class PaymentsService {
 
     const merchantOzowConfig = resolveOzowConfig({
       ozowSiteCode: payment.merchant.ozowSiteCode,
-      ozowPrivateKey: payment.merchant.ozowPrivateKey,
-      ozowApiKey: payment.merchant.ozowApiKey,
+      ozowPrivateKey: decryptStoredSecret(payment.merchant.ozowPrivateKey),
+      ozowApiKey: decryptStoredSecret(payment.merchant.ozowApiKey),
       ozowIsTest: payment.merchant.ozowIsTest,
     });
     const merchantYocoConfig = resolveYocoConfig({
       yocoPublicKey: payment.merchant.yocoPublicKey,
-      yocoSecretKey: payment.merchant.yocoSecretKey,
+      yocoSecretKey: decryptStoredSecret(payment.merchant.yocoSecretKey),
       yocoTestMode: payment.merchant.yocoTestMode,
     });
     const merchantPaystackConfig = resolvePaystackConfig({
-      paystackSecretKey: payment.merchant.paystackSecretKey,
+      paystackSecretKey: decryptStoredSecret(payment.merchant.paystackSecretKey),
       paystackTestMode: payment.merchant.paystackTestMode,
     });
     const merchantConfig = {
       ...payment.merchant,
+      payfastMerchantKey: decryptStoredSecret(payment.merchant.payfastMerchantKey),
+      payfastPassphrase: decryptStoredSecret(payment.merchant.payfastPassphrase),
       ozowSiteCode: merchantOzowConfig.siteCode,
       ozowPrivateKey: merchantOzowConfig.privateKey,
       ozowApiKey: merchantOzowConfig.apiKey,

@@ -10,8 +10,13 @@ describe('AuthService', () => {
     user: { findUnique: jest.Mock };
     membership: { findMany: jest.Mock };
   };
+  const originalEnv = { ...process.env };
 
   beforeEach(async () => {
+    process.env = {
+      ...originalEnv,
+      SESSION_SECRET: 'test-session-secret',
+    };
     prisma = {
       user: {
         findUnique: jest.fn(),
@@ -29,6 +34,10 @@ describe('AuthService', () => {
     }).compile();
 
     service = module.get<AuthService>(AuthService);
+  });
+
+  afterEach(() => {
+    process.env = { ...originalEnv };
   });
 
   it('logs in an active user with a valid password', async () => {

@@ -30,9 +30,20 @@ export class MerchantsController {
     private readonly authService: AuthService,
   ) {}
 
+  @UseGuards(SessionAuthGuard)
   @Get()
-  async list() {
-    return this.merchantsService.listMerchants();
+  async list(@Req() req: SessionRequest) {
+    return (
+      req.sessionAuth?.memberships.map((membership) => ({
+        id: membership.merchant.id,
+        name: membership.merchant.name,
+        email: membership.merchant.email,
+        isActive: membership.merchant.isActive,
+        role: membership.role,
+        planCode: membership.merchant.planCode,
+        plan: membership.merchant.plan,
+      })) ?? []
+    );
   }
 
   // POST /v1/merchants/signup
@@ -50,6 +61,7 @@ export class MerchantsController {
   }
 
   @ApiOperation({ summary: 'Get real merchant payment analytics for the dashboard' })
+  @UseGuards(SessionAuthGuard)
   @Get(':merchantId/analytics')
   async getMerchantAnalytics(
     @Req() req: Request,

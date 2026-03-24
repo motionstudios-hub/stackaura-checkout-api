@@ -3,6 +3,7 @@ import { Logger, RequestMethod, type INestApplication } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
+import { assertCredentialEncryptionPolicy } from './security/secrets';
 import cookieParser = require('cookie-parser');
 
 export function assertPayfastPostbackPolicy() {
@@ -14,6 +15,13 @@ export function assertPayfastPostbackPolicy() {
     throw new Error(
       'PAYFAST_VERIFY_POSTBACK=false is not allowed in production',
     );
+  }
+}
+
+export function assertSessionSecretPolicy(env: NodeJS.ProcessEnv = process.env) {
+  const sessionSecret = env.SESSION_SECRET?.trim();
+  if (!sessionSecret) {
+    throw new Error('SESSION_SECRET is required');
   }
 }
 
@@ -51,6 +59,8 @@ export function setupSwagger(app: INestApplication) {
 
 export async function bootstrap() {
   assertPayfastPostbackPolicy();
+  assertSessionSecretPolicy();
+  assertCredentialEncryptionPolicy();
   const logger = new Logger('Bootstrap');
 
   // rawBody: true captures req.rawBody (Buffer) for signature verification
