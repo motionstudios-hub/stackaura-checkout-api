@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { resolveMerchantPlan } from '../payments/monetization.config';
 import * as argon2 from 'argon2';
@@ -43,7 +47,10 @@ export class AuthService {
   private signSession(userId: string, expiresAt: number) {
     const secret = this.resolveSessionSecret();
     const payload = `${userId}.${expiresAt}`;
-    const sig = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+    const sig = crypto
+      .createHmac('sha256', secret)
+      .update(payload)
+      .digest('base64url');
     return `${payload}.${sig}`;
   }
 
@@ -60,7 +67,10 @@ export class AuthService {
 
     const secret = this.resolveSessionSecret();
     const payload = `${userId}.${expiresAt}`;
-    const expected = crypto.createHmac('sha256', secret).update(payload).digest('base64url');
+    const expected = crypto
+      .createHmac('sha256', secret)
+      .update(payload)
+      .digest('base64url');
 
     const a = Buffer.from(sig);
     const b = Buffer.from(expected);
@@ -91,7 +101,9 @@ export class AuthService {
     }
 
     if (!user.isActive) {
-      throw new UnauthorizedException('Account not active. Complete signup to continue.');
+      throw new UnauthorizedException(
+        'Account not active. Complete signup to continue.',
+      );
     }
 
     const expiresAt = Date.now() + this.ttlMs;

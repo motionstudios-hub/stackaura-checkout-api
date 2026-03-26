@@ -143,11 +143,7 @@ export class WebhooksService {
     const payfastPassphrase = decryptStoredSecret(
       payment.merchant.payfastPassphrase,
     );
-    this.assertPayfastSignature(
-      normalized,
-      payfastPassphrase,
-      meta.rawBody,
-    );
+    this.assertPayfastSignature(normalized, payfastPassphrase, meta.rawBody);
     await this.verifyPayfastPostback(
       normalized,
       payment.merchant.payfastIsSandbox,
@@ -373,7 +369,9 @@ export class WebhooksService {
     const candidates = [metadata ?? {}, data ?? {}, root];
 
     const eventType = this.extractStringFromCandidates(candidates, ['event']);
-    const reference = this.extractStringFromCandidates(candidates, ['reference']);
+    const reference = this.extractStringFromCandidates(candidates, [
+      'reference',
+    ]);
     const paymentId = this.extractStringFromCandidates(candidates, [
       'paymentId',
       'payment_id',
@@ -420,10 +418,7 @@ export class WebhooksService {
 
     const payment = await this.prisma.payment.findFirst({
       where: {
-        OR: [
-          ...(paymentId ? [{ id: paymentId }] : []),
-          { reference },
-        ],
+        OR: [...(paymentId ? [{ id: paymentId }] : []), { reference }],
       },
       select: {
         id: true,
@@ -454,7 +449,9 @@ export class WebhooksService {
     }
 
     const paystackConfig = resolvePaystackConfig({
-      paystackSecretKey: decryptStoredSecret(payment.merchant.paystackSecretKey),
+      paystackSecretKey: decryptStoredSecret(
+        payment.merchant.paystackSecretKey,
+      ),
       paystackTestMode: payment.merchant.paystackTestMode,
     });
     const secretKey = paystackConfig.secretKey?.trim() || null;
@@ -553,7 +550,9 @@ export class WebhooksService {
     const metadata = this.asRecord(payload?.metadata);
     const candidates = [metadata ?? {}, payload ?? {}, root];
 
-    const providerEventId = this.extractStringFromCandidates(candidates, ['id']);
+    const providerEventId = this.extractStringFromCandidates(candidates, [
+      'id',
+    ]);
     const eventType = this.extractStringFromCandidates(candidates, ['type']);
     const checkoutId = this.extractStringFromCandidates(candidates, [
       'checkoutId',
@@ -673,7 +672,8 @@ export class WebhooksService {
         provider: 'YOCO',
         yoco: {
           checkoutId: checkoutId ?? payment.gatewayRef ?? null,
-          checkoutStatus: mappedStatus === PaymentStatus.PAID ? 'completed' : null,
+          checkoutStatus:
+            mappedStatus === PaymentStatus.PAID ? 'completed' : null,
           paymentId: providerPaymentId,
           paymentStatus: rawPaymentStatus,
           eventType,
@@ -2368,13 +2368,13 @@ export class WebhooksService {
     return null;
   }
 
-   private paymentStatusToWebhookEvent(status: PaymentStatus) {
-  if (status === PaymentStatus.PAID) return 'payment_intent.succeeded';
-  if (status === PaymentStatus.FAILED) return 'payment_intent.failed';
-  if (status === PaymentStatus.CANCELLED) return 'payment_intent.cancelled';
-  if (status === PaymentStatus.PENDING) return 'payment_intent.processing';
-  return null;
-}
+  private paymentStatusToWebhookEvent(status: PaymentStatus) {
+    if (status === PaymentStatus.PAID) return 'payment_intent.succeeded';
+    if (status === PaymentStatus.FAILED) return 'payment_intent.failed';
+    if (status === PaymentStatus.CANCELLED) return 'payment_intent.cancelled';
+    if (status === PaymentStatus.PENDING) return 'payment_intent.processing';
+    return null;
+  }
 
   private mapDerivPayoutStatus(rawStatus: string | null): PayoutStatus | null {
     const normalized = rawStatus

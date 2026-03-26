@@ -117,10 +117,14 @@ export class SupportService {
   }
 
   async getConversation(userId: string, conversationId: string) {
-    const conversation = await this.findConversationForUser(userId, conversationId);
-    const merchantContext = await this.supportContextService.buildMerchantContext(
-      conversation.merchantId,
+    const conversation = await this.findConversationForUser(
+      userId,
+      conversationId,
     );
+    const merchantContext =
+      await this.supportContextService.buildMerchantContext(
+        conversation.merchantId,
+      );
 
     return {
       merchantId: conversation.merchantId,
@@ -156,19 +160,18 @@ export class SupportService {
       },
     });
 
-    const merchantContext = await this.supportContextService.buildMerchantContext(
-      args.merchantId,
-    );
+    const merchantContext =
+      await this.supportContextService.buildMerchantContext(args.merchantId);
 
     const conversationHistory = (
       await this.prisma.supportMessage.findMany({
-      where: { conversationId: conversation.id },
-      orderBy: { createdAt: 'desc' },
-      take: 16,
-      select: {
-        role: true,
-        content: true,
-      },
+        where: { conversationId: conversation.id },
+        orderBy: { createdAt: 'desc' },
+        take: 16,
+        select: {
+          role: true,
+          content: true,
+        },
       })
     ).reverse();
 
@@ -181,7 +184,8 @@ export class SupportService {
     });
 
     const contextSnapshot = merchantContext as unknown as Prisma.InputJsonValue;
-    const citations = assistantReply.citations as unknown as Prisma.InputJsonValue;
+    const citations =
+      assistantReply.citations as unknown as Prisma.InputJsonValue;
 
     await this.prisma.$transaction([
       this.prisma.supportMessage.create({
@@ -202,7 +206,10 @@ export class SupportService {
       }),
     ]);
 
-    const updated = await this.findConversationForUser(args.userId, conversation.id);
+    const updated = await this.findConversationForUser(
+      args.userId,
+      conversation.id,
+    );
 
     return {
       merchantId: args.merchantId,
@@ -223,34 +230,37 @@ export class SupportService {
       args.userId,
       args.conversationId,
     );
-    const merchantContext = await this.supportContextService.buildMerchantContext(
-      conversation.merchantId,
-    );
+    const merchantContext =
+      await this.supportContextService.buildMerchantContext(
+        conversation.merchantId,
+      );
 
-    const escalation = await this.supportEscalationService.escalateConversation({
-      conversation: {
-        id: conversation.id,
-        merchantId: conversation.merchantId,
-        userId: conversation.userId,
-        title: conversation.title,
-        status: conversation.status,
-        messages: conversation.messages.map((message) => ({
-          role: message.role,
-          content: message.content,
-          createdAt: message.createdAt,
-        })),
-        escalations: conversation.escalations.map((item) => ({
-          id: item.id,
-          status: item.status,
-          emailTo: item.emailTo,
-          summary: item.summary,
-          sentAt: item.sentAt,
-          createdAt: item.createdAt,
-        })),
+    const escalation = await this.supportEscalationService.escalateConversation(
+      {
+        conversation: {
+          id: conversation.id,
+          merchantId: conversation.merchantId,
+          userId: conversation.userId,
+          title: conversation.title,
+          status: conversation.status,
+          messages: conversation.messages.map((message) => ({
+            role: message.role,
+            content: message.content,
+            createdAt: message.createdAt,
+          })),
+          escalations: conversation.escalations.map((item) => ({
+            id: item.id,
+            status: item.status,
+            emailTo: item.emailTo,
+            summary: item.summary,
+            sentAt: item.sentAt,
+            createdAt: item.createdAt,
+          })),
+        },
+        merchantContext,
+        reason: args.reason,
       },
-      merchantContext,
-      reason: args.reason,
-    });
+    );
 
     const refreshed = await this.findConversationForUser(
       args.userId,
@@ -314,7 +324,10 @@ export class SupportService {
     });
   }
 
-  private async findConversationForUser(userId: string, conversationId: string) {
+  private async findConversationForUser(
+    userId: string,
+    conversationId: string,
+  ) {
     const conversation = await this.prisma.supportConversation.findFirst({
       where: {
         id: conversationId,

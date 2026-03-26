@@ -28,7 +28,9 @@ describe('resolveYocoConfig', () => {
   it('throws when Yoco public and secret keys belong to different environments', () => {
     expect(() =>
       detectYocoModeFromKeys('pk_test_public', 'sk_live_secret'),
-    ).toThrow('Yoco public and secret keys must belong to the same environment');
+    ).toThrow(
+      'Yoco public and secret keys must belong to the same environment',
+    );
   });
 
   it('throws when explicit Yoco testMode conflicts with key environment', () => {

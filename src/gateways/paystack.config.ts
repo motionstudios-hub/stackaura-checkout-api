@@ -5,7 +5,7 @@ export const PAYSTACK_SUCCESS_URL = 'https://stackaura.co.za/payments/success';
 export const PAYSTACK_CANCEL_URL = 'https://stackaura.co.za/payments/cancel';
 export const PAYSTACK_ERROR_URL = 'https://stackaura.co.za/payments/error';
 export const PAYSTACK_WEBHOOK_URL =
-  'https://api.stackaura.co.za/webhooks/paystack';
+  'https://api.stackaura.co.za/v1/webhooks/paystack';
 
 export type PaystackConfigSource = {
   paystackSecretKey?: string | null;
@@ -62,7 +62,9 @@ export function resolvePaystackConfig(
   };
 }
 
-export function assertPaystackConfigConsistency(config: ResolvedPaystackConfig) {
+export function assertPaystackConfigConsistency(
+  config: ResolvedPaystackConfig,
+) {
   const detectedMode = detectPaystackModeFromSecretKey(config.secretKey);
   if (detectedMode !== null && detectedMode !== config.testMode) {
     throw new Error('Paystack secret key does not match the selected testMode');

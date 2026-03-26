@@ -81,7 +81,10 @@ export class SupportEscalationService {
         conversationId: args.conversation.id,
         merchantId: args.conversation.merchantId,
         userId: args.conversation.userId,
-        reason: (args.reason?.trim() || 'Human support requested').slice(0, 240),
+        reason: (args.reason?.trim() || 'Human support requested').slice(
+          0,
+          240,
+        ),
         summary,
         payload: payload as Prisma.InputJsonValue,
         emailTo,
@@ -140,7 +143,9 @@ export class SupportEscalationService {
         data: {
           status: SupportEscalationStatus.FAILED,
           failureMessage:
-            error instanceof Error ? error.message.slice(0, 1000) : String(error),
+            error instanceof Error
+              ? error.message.slice(0, 1000)
+              : String(error),
         },
       });
 
@@ -149,14 +154,19 @@ export class SupportEscalationService {
   }
 
   private getSupportInboxEmail() {
-    return process.env.SUPPORT_INBOX_EMAIL?.trim() || 'wesupport@stackaura.co.za';
+    return (
+      process.env.SUPPORT_INBOX_EMAIL?.trim() || 'wesupport@stackaura.co.za'
+    );
   }
 
-  private buildSummary(args: {
-    conversation: EscalationConversation;
-    merchantContext: MerchantSupportContext;
-    reason?: string | null;
-  }, triage: EscalationTriage) {
+  private buildSummary(
+    args: {
+      conversation: EscalationConversation;
+      merchantContext: MerchantSupportContext;
+      reason?: string | null;
+    },
+    triage: EscalationTriage,
+  ) {
     const reason = args.reason?.trim() || 'Human support requested';
 
     return [
@@ -210,7 +220,9 @@ export class SupportEscalationService {
     summary: string;
     triage: EscalationTriage;
   }) {
-    const provider = (process.env.SUPPORT_ESCALATION_PROVIDER?.trim() || 'resend').toLowerCase();
+    const provider = (
+      process.env.SUPPORT_ESCALATION_PROVIDER?.trim() || 'resend'
+    ).toLowerCase();
 
     if (provider === 'resend') {
       await this.sendViaResend(args);
@@ -393,17 +405,26 @@ export class SupportEscalationService {
     const latestUserMessage =
       [...args.conversation.messages]
         .reverse()
-        .find((message) => message.role === SupportMessageRole.USER)?.content?.trim() ||
+        .find((message) => message.role === SupportMessageRole.USER)
+        ?.content?.trim() ||
       args.reason?.trim() ||
       'Human support requested';
     const latestAssistantMessage =
       [...args.conversation.messages]
         .reverse()
-        .find((message) => message.role === SupportMessageRole.ASSISTANT)?.content || '';
-    const provider = this.detectProvider(latestUserMessage, args.merchantContext);
+        .find((message) => message.role === SupportMessageRole.ASSISTANT)
+        ?.content || '';
+    const provider = this.detectProvider(
+      latestUserMessage,
+      args.merchantContext,
+    );
     const referenceId =
-      this.getLatestRelevantFailure(args.merchantContext, provider)?.reference ?? null;
-    const failureCount = this.countRecentFailures(args.merchantContext, provider);
+      this.getLatestRelevantFailure(args.merchantContext, provider)
+        ?.reference ?? null;
+    const failureCount = this.countRecentFailures(
+      args.merchantContext,
+      provider,
+    );
     const environmentMismatch = this.detectEnvironmentMismatch(
       args.merchantContext,
       provider,
@@ -449,10 +470,16 @@ export class SupportEscalationService {
     };
   }
 
-  private buildIssueLabel(issue: string, provider: 'ozow' | 'yoco' | 'paystack' | null) {
+  private buildIssueLabel(
+    issue: string,
+    provider: 'ozow' | 'yoco' | 'paystack' | null,
+  ) {
     const message = issue.trim().toLowerCase();
 
-    if (/(checkout|payment|transaction)/.test(message) && /(fail|error|cancel|declin)/.test(message)) {
+    if (
+      /(checkout|payment|transaction)/.test(message) &&
+      /(fail|error|cancel|declin)/.test(message)
+    ) {
       return 'Checkout failures';
     }
 
@@ -485,15 +512,18 @@ export class SupportEscalationService {
       return 'No active API keys are available for the current merchant environment';
     }
 
-    if (provider === 'ozow' && !Boolean(merchantContext.gateways.ozow.connected)) {
+    if (provider === 'ozow' && !merchantContext.gateways.ozow.connected) {
       return 'Ozow is not fully configured for signed payment requests';
     }
 
-    if (provider === 'yoco' && !Boolean(merchantContext.gateways.yoco.connected)) {
+    if (provider === 'yoco' && !merchantContext.gateways.yoco.connected) {
       return 'Yoco is not fully configured for checkout creation';
     }
 
-    if (provider === 'paystack' && !Boolean(merchantContext.gateways.paystack.connected)) {
+    if (
+      provider === 'paystack' &&
+      !merchantContext.gateways.paystack.connected
+    ) {
       return 'Paystack is not fully configured for transaction initialization';
     }
 
@@ -574,8 +604,11 @@ export class SupportEscalationService {
     return (
       merchantContext.payments.recentFailures.find((payment) => {
         const gateway = payment.gateway?.toLowerCase() ?? '';
-        const lastAttemptGateway = payment.lastAttemptGateway?.toLowerCase() ?? '';
-        return gateway.includes(provider) || lastAttemptGateway.includes(provider);
+        const lastAttemptGateway =
+          payment.lastAttemptGateway?.toLowerCase() ?? '';
+        return (
+          gateway.includes(provider) || lastAttemptGateway.includes(provider)
+        );
       }) ?? null
     );
   }
@@ -585,7 +618,8 @@ export class SupportEscalationService {
     provider: 'ozow' | 'yoco' | 'paystack' | null,
   ) {
     return (
-      this.getLatestRelevantFailure(merchantContext, provider)?.status ?? 'UNKNOWN'
+      this.getLatestRelevantFailure(merchantContext, provider)?.status ??
+      'UNKNOWN'
     );
   }
 
@@ -599,8 +633,11 @@ export class SupportEscalationService {
 
     return merchantContext.payments.recentFailures.filter((payment) => {
       const gateway = payment.gateway?.toLowerCase() ?? '';
-      const lastAttemptGateway = payment.lastAttemptGateway?.toLowerCase() ?? '';
-      return gateway.includes(provider) || lastAttemptGateway.includes(provider);
+      const lastAttemptGateway =
+        payment.lastAttemptGateway?.toLowerCase() ?? '';
+      return (
+        gateway.includes(provider) || lastAttemptGateway.includes(provider)
+      );
     }).length;
   }
 
@@ -634,8 +671,10 @@ export class SupportEscalationService {
     }
 
     return (
-      (merchantContext.merchant.currentEnvironment === 'live' && gatewayTestMode) ||
-      (merchantContext.merchant.currentEnvironment === 'test' && !gatewayTestMode)
+      (merchantContext.merchant.currentEnvironment === 'live' &&
+        gatewayTestMode) ||
+      (merchantContext.merchant.currentEnvironment === 'test' &&
+        !gatewayTestMode)
     );
   }
 

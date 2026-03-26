@@ -57,7 +57,9 @@ describe('AuthController', () => {
       'owner@example.com',
       'ChangeMe123!',
     );
-    expect((response as unknown as { cookie: jest.Mock }).cookie).toHaveBeenCalledWith(
+    expect(
+      (response as unknown as { cookie: jest.Mock }).cookie,
+    ).toHaveBeenCalledWith(
       'stackaura_session',
       'signed-session-token',
       expect.objectContaining({

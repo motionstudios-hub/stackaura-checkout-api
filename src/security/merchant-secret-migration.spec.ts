@@ -90,7 +90,9 @@ describe('merchant secret migration helpers', () => {
     });
 
     const encryptedValues = Object.values(update?.data ?? {});
-    expect(encryptedValues.every((value) => isEncryptedSecret(value))).toBe(true);
+    expect(encryptedValues.every((value) => isEncryptedSecret(value))).toBe(
+      true,
+    );
     expect(decryptStoredSecret(update?.data.payfastMerchantKey ?? null)).toBe(
       'pf-key',
     );

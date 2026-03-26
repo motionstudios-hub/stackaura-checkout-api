@@ -167,7 +167,6 @@ describe('resolveOzowConfig', () => {
   });
 });
 
-
 describe('Ozow config hardening', () => {
   const originalEnv = {
     siteCode: process.env.OZOW_SITE_CODE,

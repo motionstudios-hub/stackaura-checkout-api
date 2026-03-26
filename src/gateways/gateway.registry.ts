@@ -25,9 +25,7 @@ export class GatewayRegistry {
       case GatewayProvider.PAYSTACK:
         return this.paystackGateway;
       default:
-        throw new NotFoundException(
-          `No adapter registered for ${provider}`,
-        );
+        throw new NotFoundException(`No adapter registered for ${provider}`);
     }
   }
 }

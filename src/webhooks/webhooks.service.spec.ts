@@ -183,7 +183,9 @@ describe('WebhooksService', () => {
     secret = 'sk_test_secret',
   ) => {
     const rawBody = JSON.stringify(body);
-    const signature = createHmac('sha512', secret).update(rawBody).digest('hex');
+    const signature = createHmac('sha512', secret)
+      .update(rawBody)
+      .digest('hex');
 
     return {
       rawBody,
@@ -1088,10 +1090,7 @@ describe('WebhooksService', () => {
     expect(prisma.payment.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
-          OR: [
-            { id: 'pay-ozow-hosted' },
-            { reference: 'INV-OZOW-HOSTED' },
-          ],
+          OR: [{ id: 'pay-ozow-hosted' }, { reference: 'INV-OZOW-HOSTED' }],
         },
       }),
     );
@@ -1254,9 +1253,9 @@ describe('WebhooksService', () => {
         data: { status: 'SUCCEEDED' },
       }),
     );
-    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).toHaveBeenCalledWith(
-      'pay-yoco-paid',
-    );
+    expect(
+      paymentsService.recordSuccessfulPaymentLedgerByPaymentId,
+    ).toHaveBeenCalledWith('pay-yoco-paid');
     expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
       'pay-yoco-paid',
     );
@@ -1325,7 +1324,9 @@ describe('WebhooksService', () => {
         }),
       }),
     );
-    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).not.toHaveBeenCalled();
+    expect(
+      paymentsService.recordSuccessfulPaymentLedgerByPaymentId,
+    ).not.toHaveBeenCalled();
   });
 
   it('deduplicates repeated Yoco webhook events by providerEventId', async () => {
@@ -1413,9 +1414,9 @@ describe('WebhooksService', () => {
       ),
     ).resolves.toEqual({ ok: true });
 
-    expect(paymentsService.recordSuccessfulPaymentLedgerByPaymentId).toHaveBeenCalledWith(
-      'pay-signup-paid',
-    );
+    expect(
+      paymentsService.recordSuccessfulPaymentLedgerByPaymentId,
+    ).toHaveBeenCalledWith('pay-signup-paid');
     expect(paymentsService.fulfillPaidSignupPayment).toHaveBeenCalledWith(
       'pay-signup-paid',
     );

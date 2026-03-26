@@ -15,7 +15,9 @@ export class SupportContextService {
     private readonly merchantsService: MerchantsService,
   ) {}
 
-  async buildMerchantContext(merchantId: string): Promise<MerchantSupportContext> {
+  async buildMerchantContext(
+    merchantId: string,
+  ): Promise<MerchantSupportContext> {
     const merchant = await this.prisma.merchant.findUnique({
       where: { id: merchantId },
       select: {
@@ -162,8 +164,11 @@ export class SupportContextService {
         updatedAt: merchant.updatedAt.toISOString(),
       },
       gateways: {
-        connectedCount: [ozow.connected, yoco.connected, paystack.connected].filter(Boolean)
-          .length,
+        connectedCount: [
+          ozow.connected,
+          yoco.connected,
+          paystack.connected,
+        ].filter(Boolean).length,
         ozow,
         yoco,
         paystack,
@@ -203,13 +208,15 @@ export class SupportContextService {
           lastAttemptGateway: payment.attempts[0]?.gateway ?? null,
           lastAttemptStatus: payment.attempts[0]?.status ?? null,
         })),
-        recentRoutingIssues: analytics.recentRoutingHistory.slice(0, 3).map((item) => ({
-          reference: item.reference,
-          status: item.status,
-          routeSummary: item.routeSummary,
-          fallbackCount: item.fallbackCount,
-          createdAt: item.createdAt,
-        })),
+        recentRoutingIssues: analytics.recentRoutingHistory
+          .slice(0, 3)
+          .map((item) => ({
+            reference: item.reference,
+            status: item.status,
+            routeSummary: item.routeSummary,
+            fallbackCount: item.fallbackCount,
+            createdAt: item.createdAt,
+          })),
       },
       payouts: {
         pendingCount: pendingPayoutCount,
@@ -236,7 +243,9 @@ export class SupportContextService {
   }
 
   private getSupportInboxEmail() {
-    return process.env.SUPPORT_INBOX_EMAIL?.trim() || 'wesupport@stackaura.co.za';
+    return (
+      process.env.SUPPORT_INBOX_EMAIL?.trim() || 'wesupport@stackaura.co.za'
+    );
   }
 
   private resolveEnvironment(args: {
@@ -265,7 +274,10 @@ export class SupportContextService {
       args.paystackTestMode,
     ].filter((value): value is boolean => typeof value === 'boolean');
 
-    if (gatewayModes.length === 0 || args.connectedGateways.every((value) => !value)) {
+    if (
+      gatewayModes.length === 0 ||
+      args.connectedGateways.every((value) => !value)
+    ) {
       return 'unknown';
     }
 

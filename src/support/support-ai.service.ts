@@ -127,7 +127,9 @@ export class SupportAiService {
 
     if (!res.ok) {
       const text = await res.text();
-      throw new Error(`OpenAI support response failed (${res.status}): ${text}`);
+      throw new Error(
+        `OpenAI support response failed (${res.status}): ${text}`,
+      );
     }
 
     const data = (await res.json()) as {
@@ -206,7 +208,10 @@ export class SupportAiService {
     let usedContextSignals = false;
 
     if (topic === 'payment_troubleshooting') {
-      const troubleshootingReply = this.buildTroubleshootingReply(args, provider);
+      const troubleshootingReply = this.buildTroubleshootingReply(
+        args,
+        provider,
+      );
       lines.push(troubleshootingReply.content);
       usedContextSignals = troubleshootingReply.usedContextSignals;
     } else if (topic === 'gateway') {
@@ -272,8 +277,13 @@ export class SupportAiService {
     }
 
     const bestKnowledge = args.knowledgeMatches[0];
-    if (bestKnowledge && (!usedContextSignals || topic !== 'payment_troubleshooting')) {
-      lines.push(`The most relevant Stackaura guidance right now is ${bestKnowledge.title}.`);
+    if (
+      bestKnowledge &&
+      (!usedContextSignals || topic !== 'payment_troubleshooting')
+    ) {
+      lines.push(
+        `The most relevant Stackaura guidance right now is ${bestKnowledge.title}.`,
+      );
     }
 
     lines.push(
@@ -350,16 +360,24 @@ export class SupportAiService {
       possibleCauses.push(
         'The merchant onboarding or activation flow is not fully complete yet, which can block normal live payment processing.',
       );
-      checks.push('Confirm the merchant account is active on the dashboard home and support context panel.');
-      nextSteps.push('Finish any outstanding onboarding or activation steps before retrying live payments.');
+      checks.push(
+        'Confirm the merchant account is active on the dashboard home and support context panel.',
+      );
+      nextSteps.push(
+        'Finish any outstanding onboarding or activation steps before retrying live payments.',
+      );
     }
 
     if (!context.apiKeys.activeCount) {
       possibleCauses.push(
         'There are no active API keys for this merchant, so server-side payment creation calls may be failing before the provider handoff.',
       );
-      checks.push('Open the Developer Keys page and confirm there is at least one active key for the environment you are using.');
-      nextSteps.push('Create a test or live API key from the dashboard before retrying checkout creation.');
+      checks.push(
+        'Open the Developer Keys page and confirm there is at least one active key for the environment you are using.',
+      );
+      nextSteps.push(
+        'Create a test or live API key from the dashboard before retrying checkout creation.',
+      );
     }
 
     if (targetProvider && gateway) {
@@ -410,7 +428,10 @@ export class SupportAiService {
 
     return {
       content: sections.join('\n\n'),
-      usedContextSignals: visibleFacts.length > 0 || recentFailures.length > 0 || routeIssues.length > 0,
+      usedContextSignals:
+        visibleFacts.length > 0 ||
+        recentFailures.length > 0 ||
+        routeIssues.length > 0,
     };
   }
 
@@ -547,7 +568,8 @@ export class SupportAiService {
     const target = provider.toUpperCase();
     return context.payments.recentFailures.filter((payment) => {
       const gateway = payment.gateway?.toUpperCase() ?? null;
-      const lastAttemptGateway = payment.lastAttemptGateway?.toUpperCase() ?? null;
+      const lastAttemptGateway =
+        payment.lastAttemptGateway?.toUpperCase() ?? null;
       return gateway === target || lastAttemptGateway === target;
     });
   }
@@ -566,10 +588,14 @@ export class SupportAiService {
     );
   }
 
-  private mostRecentFailureProvider(context: MerchantSupportContext): GatewayName | null {
+  private mostRecentFailureProvider(
+    context: MerchantSupportContext,
+  ): GatewayName | null {
     const latest = context.payments.recentFailures[0];
     const providerValue =
-      latest?.lastAttemptGateway?.toLowerCase() ?? latest?.gateway?.toLowerCase() ?? '';
+      latest?.lastAttemptGateway?.toLowerCase() ??
+      latest?.gateway?.toLowerCase() ??
+      '';
 
     if (providerValue.includes('ozow')) {
       return 'ozow';
@@ -605,7 +631,9 @@ export class SupportAiService {
       ) &&
       /(payment|transaction|checkout|gateway|ozow|yoco|paystack)/.test(message);
     const paymentFailure =
-      /(payment|transaction|checkout|ozow|yoco|paystack|gateway)/.test(message) &&
+      /(payment|transaction|checkout|ozow|yoco|paystack|gateway)/.test(
+        message,
+      ) &&
       /(fail|failing|failed|error|declin|cancel|timed out|timeout|rejected)/.test(
         message,
       );
@@ -623,7 +651,9 @@ export class SupportAiService {
     if (/(onboarding|pending|activation|account pending|kyc)/.test(message)) {
       return 'onboarding';
     }
-    if (/(payment|transaction|checkout|fail|error|declined|routing)/.test(message)) {
+    if (
+      /(payment|transaction|checkout|fail|error|declined|routing)/.test(message)
+    ) {
       return 'payments';
     }
     if (/(payout|settlement|withdrawal|transfer)/.test(message)) {
@@ -653,11 +683,17 @@ export class SupportAiService {
   private detectEscalationNeed(messageRaw: string) {
     const message = messageRaw.trim().toLowerCase();
 
-    if (/(fraud|chargeback|dispute|billing issue|invoice|refund dispute)/.test(message)) {
+    if (
+      /(fraud|chargeback|dispute|billing issue|invoice|refund dispute)/.test(
+        message,
+      )
+    ) {
       return 'billing, dispute, or fraud handling';
     }
 
-    if (/(legal|lawyer|lawsuit|compliance|kyc review|manual review)/.test(message)) {
+    if (
+      /(legal|lawyer|lawsuit|compliance|kyc review|manual review)/.test(message)
+    ) {
       return 'legal, compliance, or manual review handling';
     }
 

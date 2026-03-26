@@ -21,7 +21,10 @@ export type ResolvedYocoConfig = {
 const trimToNull = (value: unknown) =>
   typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 
-function inferKeyMode(key: string | null, prefixes: { test: string; live: string }) {
+function inferKeyMode(
+  key: string | null,
+  prefixes: { test: string; live: string },
+) {
   if (!key) return null;
   if (key.startsWith(prefixes.test)) return true;
   if (key.startsWith(prefixes.live)) return false;
@@ -43,11 +46,7 @@ export function detectYocoModeFromKeys(
     live: 'sk_live_',
   });
 
-  if (
-    publicMode !== null &&
-    secretMode !== null &&
-    publicMode !== secretMode
-  ) {
+  if (publicMode !== null && secretMode !== null && publicMode !== secretMode) {
     throw new Error(
       'Yoco public and secret keys must belong to the same environment',
     );

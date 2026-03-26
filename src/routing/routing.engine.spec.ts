@@ -66,11 +66,15 @@ describe('RoutingEngine', () => {
       }),
     );
     expect(
-      decision.readiness.find((item) => item.gateway === GatewayProvider.PAYSTACK),
+      decision.readiness.find(
+        (item) => item.gateway === GatewayProvider.PAYSTACK,
+      ),
     ).toEqual(
       expect.objectContaining({
         ready: false,
-        issues: expect.arrayContaining(['merchant Paystack credentials are not configured']),
+        issues: expect.arrayContaining([
+          'merchant Paystack credentials are not configured',
+        ]),
       }),
     );
   });
@@ -140,8 +144,6 @@ describe('RoutingEngine', () => {
     ).toThrow('Gateway PAYSTACK is not available for this payment');
   });
 
-
-
   it('marks Ozow unavailable when merchant config is partial instead of mixing env fallback values', () => {
     const originalEnv = {
       siteCode: process.env.OZOW_SITE_CODE,
@@ -175,7 +177,9 @@ describe('RoutingEngine', () => {
       ).toEqual(
         expect.objectContaining({
           ready: false,
-          issues: expect.arrayContaining(['merchant Ozow config is incomplete']),
+          issues: expect.arrayContaining([
+            'merchant Ozow config is incomplete',
+          ]),
         }),
       );
     } finally {

@@ -43,9 +43,9 @@ describe('yoco lifecycle mapping', () => {
     expect(
       mapYocoEventToPaymentStatus({ eventType: 'payment.succeeded' }),
     ).toBe(PaymentStatus.PAID);
-    expect(
-      mapYocoEventToPaymentStatus({ paymentStatus: 'failed' }),
-    ).toBe(PaymentStatus.FAILED);
+    expect(mapYocoEventToPaymentStatus({ paymentStatus: 'failed' })).toBe(
+      PaymentStatus.FAILED,
+    );
   });
 
   it('maps checkout state to gateway lookup state', () => {

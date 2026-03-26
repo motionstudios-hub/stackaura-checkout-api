@@ -103,6 +103,7 @@ export class WebhooksController {
   @ApiOperation({ summary: 'Receive Paystack webhook callback' })
   @Public()
   @HttpCode(200)
+  // Paystack webhook: POST /v1/webhooks/paystack
   @Post('paystack')
   async paystack(
     @Req() req: RawBodyRequest,

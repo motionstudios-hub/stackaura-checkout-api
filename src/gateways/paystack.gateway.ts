@@ -114,7 +114,9 @@ export class PaystackGateway implements GatewayAdapter {
     const reference = this.pickString(data, ['reference']) ?? input.reference;
 
     if (!redirectUrl) {
-      throw new Error('Paystack initialize did not return an authorization_url');
+      throw new Error(
+        'Paystack initialize did not return an authorization_url',
+      );
     }
 
     return {
@@ -192,7 +194,8 @@ export class PaystackGateway implements GatewayAdapter {
       reference: resolvedReference,
       accessCode: this.pickString(data, ['access_code']),
       providerStatus,
-      gatewayStatus: mapPaystackTransactionStatusToGatewayStatus(providerStatus),
+      gatewayStatus:
+        mapPaystackTransactionStatusToGatewayStatus(providerStatus),
       amount: this.pickString(data, ['amount']),
       currency: this.pickString(data, ['currency']),
       paidAt: this.pickString(data, ['paid_at', 'paidAt']),

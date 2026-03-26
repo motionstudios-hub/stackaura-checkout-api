@@ -142,9 +142,9 @@ function currentEnvOzowConfig(): NormalizedOzowConfigValues {
 function hasAnyMerchantValue(config: NormalizedOzowConfigValues) {
   return Boolean(
     config.siteCode ||
-      config.privateKey ||
-      config.apiKey ||
-      config.isTest !== null,
+    config.privateKey ||
+    config.apiKey ||
+    config.isTest !== null,
   );
 }
 
@@ -155,7 +155,8 @@ function hasAnyMerchantCredential(config: NormalizedOzowConfigValues) {
 export function parseOzowTestMode(value: string | boolean | null | undefined) {
   if (typeof value === 'boolean') return value;
 
-  const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+  const normalized =
+    typeof value === 'string' ? value.trim().toLowerCase() : '';
   if (['1', 'true', 'yes', 'y', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'no', 'n', 'off'].includes(normalized)) return false;
 
@@ -251,11 +252,7 @@ export function resolveOzowRedirectUrls(args: {
       OZOW_CANCEL_URL,
       'cancelUrl',
     ),
-    errorUrl: resolveOzowRedirectUrl(
-      args.errorUrl,
-      OZOW_ERROR_URL,
-      'errorUrl',
-    ),
+    errorUrl: resolveOzowRedirectUrl(args.errorUrl, OZOW_ERROR_URL, 'errorUrl'),
     notifyUrl: resolveOzowRedirectUrl(
       args.notifyUrl,
       OZOW_NOTIFY_URL,
@@ -341,7 +338,9 @@ export function buildOzowPaymentForm(
     errorUrl: args.errorUrl,
     notifyUrl: args.notifyUrl,
   });
-  const transactionReference = normalizeOzowTransactionReference(args.reference);
+  const transactionReference = normalizeOzowTransactionReference(
+    args.reference,
+  );
 
   const fieldEntries: Array<[string, string]> = [
     ['SiteCode', siteCode],

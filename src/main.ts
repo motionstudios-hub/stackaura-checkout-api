@@ -18,7 +18,9 @@ export function assertPayfastPostbackPolicy() {
   }
 }
 
-export function assertSessionSecretPolicy(env: NodeJS.ProcessEnv = process.env) {
+export function assertSessionSecretPolicy(
+  env: NodeJS.ProcessEnv = process.env,
+) {
   const sessionSecret = env.SESSION_SECRET?.trim();
   if (!sessionSecret) {
     throw new Error('SESSION_SECRET is required');
@@ -84,7 +86,6 @@ export async function bootstrap() {
       { path: 'payments/ozow/initiate', method: RequestMethod.POST },
       { path: 'payments/ozow/:reference/status', method: RequestMethod.GET },
       { path: 'webhooks/ozow', method: RequestMethod.POST },
-      { path: 'webhooks/paystack', method: RequestMethod.POST },
     ],
   });
   if (isSwaggerEnabled()) {

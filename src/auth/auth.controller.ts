@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Post,
+  Req,
+  Res,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 
@@ -27,7 +35,8 @@ export class AuthController {
   }
 
   private resolveSessionCookieSameSite(): SessionCookieSameSite {
-    const normalized = process.env.SESSION_COOKIE_SAME_SITE?.trim().toLowerCase();
+    const normalized =
+      process.env.SESSION_COOKIE_SAME_SITE?.trim().toLowerCase();
     if (normalized === 'strict' || normalized === 'none') {
       return normalized;
     }
@@ -35,9 +44,7 @@ export class AuthController {
     return 'lax';
   }
 
-  private resolveSessionCookieSecure(
-    sameSite: SessionCookieSameSite,
-  ): boolean {
+  private resolveSessionCookieSecure(sameSite: SessionCookieSameSite): boolean {
     if (sameSite === 'none') {
       return true;
     }
@@ -71,8 +78,14 @@ export class AuthController {
   }
 
   @Post('login')
-  async login(@Body() body: LoginDto, @Res({ passthrough: true }) res: Response) {
-    const { userId, sessionToken, expiresAt } = await this.auth.login(body.email, body.password);
+  async login(
+    @Body() body: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { userId, sessionToken, expiresAt } = await this.auth.login(
+      body.email,
+      body.password,
+    );
 
     const cookieName = process.env.SESSION_COOKIE_NAME ?? 'stackaura_session';
 

@@ -191,9 +191,9 @@ describe('MerchantsController', () => {
       headers: {},
     };
 
-    await expect(
-      controller.listApiKeys(req as never, 'm-1'),
-    ).resolves.toEqual([{ id: 'key-1', label: 'primary-backend' }]);
+    await expect(controller.listApiKeys(req as never, 'm-1')).resolves.toEqual([
+      { id: 'key-1', label: 'primary-backend' },
+    ]);
 
     expect(authService.resolveSession).toHaveBeenCalledWith('session-token');
     expect(merchantsService.listApiKeys).toHaveBeenCalledWith('m-1');

@@ -143,8 +143,9 @@ export class RoutingEngine {
         ],
         readiness: [...readiness, gatewayReadiness].filter(
           (item, index, list) =>
-            list.findIndex((candidate) => candidate.gateway === item.gateway) ===
-            index,
+            list.findIndex(
+              (candidate) => candidate.gateway === item.gateway,
+            ) === index,
         ),
       };
     }
@@ -283,10 +284,7 @@ export class RoutingEngine {
             issues.push('merchant Paystack credentials are not configured');
           }
 
-          if (
-            !args.customerEmail ||
-            args.customerEmail.trim().length === 0
-          ) {
+          if (!args.customerEmail || args.customerEmail.trim().length === 0) {
             issues.push('Paystack requires customerEmail');
           }
 
@@ -327,8 +325,9 @@ export class RoutingEngine {
     paymentMethodPreference: RoutingPaymentMethodPreference,
   ): RoutingCandidate[] {
     return gatewayOrder
-      .map((gateway) =>
-        readiness.find((candidate) => candidate.gateway === gateway) ?? null,
+      .map(
+        (gateway) =>
+          readiness.find((candidate) => candidate.gateway === gateway) ?? null,
       )
       .filter((gateway): gateway is GatewayReadiness => Boolean(gateway?.ready))
       .map((gateway, index) => ({
@@ -391,9 +390,7 @@ export class RoutingEngine {
     return null;
   }
 
-  private buildNoGatewayAvailableMessage(
-    readiness: GatewayReadiness[],
-  ) {
+  private buildNoGatewayAvailableMessage(readiness: GatewayReadiness[]) {
     const details = readiness
       .map((gateway) => {
         const label = gateway.gateway;

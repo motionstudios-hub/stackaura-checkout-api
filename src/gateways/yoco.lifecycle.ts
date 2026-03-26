@@ -7,7 +7,9 @@ const normalizeYocoState = (value: unknown) =>
     : null;
 
 const hasValue = (value: unknown) =>
-  typeof value === 'string' ? value.trim().length > 0 : value !== null && value !== undefined;
+  typeof value === 'string'
+    ? value.trim().length > 0
+    : value !== null && value !== undefined;
 
 export function mapYocoCheckoutStatusToPaymentStatus(args: {
   checkoutStatus: unknown;

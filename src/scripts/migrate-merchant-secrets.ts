@@ -31,7 +31,8 @@ function parseArgs(argv: string[]): ScriptArgs {
   if (rollbackFileArg) {
     return {
       mode: 'rollback',
-      backupFile: rollbackFileArg.slice('--rollback-file='.length).trim() || null,
+      backupFile:
+        rollbackFileArg.slice('--rollback-file='.length).trim() || null,
     };
   }
 
@@ -73,7 +74,9 @@ function summarize(entries: MerchantSecretBackupEntry[]) {
   ) as Record<(typeof MERCHANT_SECRET_FIELDS)[number], number>;
 
   for (const entry of entries) {
-    for (const field of Object.keys(entry.fields) as (typeof MERCHANT_SECRET_FIELDS)[number][]) {
+    for (const field of Object.keys(
+      entry.fields,
+    ) as (typeof MERCHANT_SECRET_FIELDS)[number][]) {
       fieldCounts[field] += 1;
     }
   }

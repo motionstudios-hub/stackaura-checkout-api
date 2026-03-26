@@ -154,7 +154,8 @@ export class MerchantsService {
     const gatewayDistribution = Array.from(distribution.values())
       .sort((left, right) => {
         const orderDelta =
-          this.gatewaySortIndex(left.gateway) - this.gatewaySortIndex(right.gateway);
+          this.gatewaySortIndex(left.gateway) -
+          this.gatewaySortIndex(right.gateway);
         if (orderDelta !== 0) {
           return orderDelta;
         }
@@ -173,7 +174,9 @@ export class MerchantsService {
       amountCents: payment.amountCents,
       status: payment.status,
       gateway: this.resolveAnalyticsGateway(payment),
-      gatewayLabel: this.formatGatewayLabel(this.resolveAnalyticsGateway(payment)),
+      gatewayLabel: this.formatGatewayLabel(
+        this.resolveAnalyticsGateway(payment),
+      ),
       createdAt: payment.createdAt.toISOString(),
     }));
 
@@ -181,7 +184,9 @@ export class MerchantsService {
       .filter((payment) => payment.attempts.length > 0)
       .slice(0, 5)
       .map((payment) => {
-        const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
+        const routingMeta = this.extractAnalyticsRoutingMeta(
+          payment.rawGateway,
+        );
         const path = this.buildAnalyticsRoutingPath(payment);
 
         return {
@@ -189,7 +194,9 @@ export class MerchantsService {
           amountCents: payment.amountCents,
           status: payment.status,
           gateway: this.resolveAnalyticsGateway(payment),
-          gatewayLabel: this.formatGatewayLabel(this.resolveAnalyticsGateway(payment)),
+          gatewayLabel: this.formatGatewayLabel(
+            this.resolveAnalyticsGateway(payment),
+          ),
           createdAt: payment.createdAt.toISOString(),
           selectionMode: routingMeta.selectionMode,
           requestedGateway: routingMeta.requestedGateway,
@@ -249,7 +256,9 @@ export class MerchantsService {
     return value as Record<string, unknown>;
   }
 
-  private extractAnalyticsRoutingMeta(rawGateway: Prisma.JsonValue | null | undefined) {
+  private extractAnalyticsRoutingMeta(
+    rawGateway: Prisma.JsonValue | null | undefined,
+  ) {
     const root = this.asJsonRecord(rawGateway);
     const routing = this.asJsonRecord(root?.routing);
     const fallbackCount = this.parseAnalyticsCount(routing?.fallbackCount);
@@ -258,7 +267,8 @@ export class MerchantsService {
         ? routing.selectionMode.trim().toLowerCase()
         : null;
     const requestedGateway =
-      typeof routing?.requestedGateway === 'string' && routing.requestedGateway.trim()
+      typeof routing?.requestedGateway === 'string' &&
+      routing.requestedGateway.trim()
         ? routing.requestedGateway.trim().toUpperCase()
         : null;
 
@@ -343,9 +353,9 @@ export class MerchantsService {
 
   private buildAnalyticsTimelineStages(payment: MerchantAnalyticsPayment) {
     const routingMeta = this.extractAnalyticsRoutingMeta(payment.rawGateway);
-    const stages: Array<'CREATED' | 'INITIATED' | 'FAILED' | 'FALLBACK' | 'SUCCEEDED'> = [
-      'CREATED',
-    ];
+    const stages: Array<
+      'CREATED' | 'INITIATED' | 'FAILED' | 'FALLBACK' | 'SUCCEEDED'
+    > = ['CREATED'];
 
     if (payment.attempts.length > 0) {
       stages.push('INITIATED');
@@ -368,9 +378,7 @@ export class MerchantsService {
       stages.push('SUCCEEDED');
     }
 
-    return stages.filter(
-      (stage, index) => stages.indexOf(stage) === index,
-    );
+    return stages.filter((stage, index) => stages.indexOf(stage) === index);
   }
 
   private mapAttemptStatusToRoutingEvent(status: string) {
@@ -472,11 +480,14 @@ export class MerchantsService {
     return normalizedEnv;
   }
 
-  private async createApiKeyRecord(args: {
-    merchantId: string;
-    label: string;
-    environment?: 'test' | 'live';
-  }, client: PrismaService | Prisma.TransactionClient = this.prisma) {
+  private async createApiKeyRecord(
+    args: {
+      merchantId: string;
+      label: string;
+      environment?: 'test' | 'live';
+    },
+    client: PrismaService | Prisma.TransactionClient = this.prisma,
+  ) {
     const normalizedEnv = this.normalizeApiKeyEnvironment(args.environment);
     const keyPrefix = normalizedEnv === 'live' ? 'ck_live' : 'ck_test';
     const apiKeyPlain = this.generateApiKey(keyPrefix);
@@ -1014,7 +1025,8 @@ export class MerchantsService {
       );
 
       const detectedMode = detectYocoModeFromKeys(yocoPublicKey, yocoSecretKey);
-      const yocoTestMode = body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
+      const yocoTestMode =
+        body?.testMode ?? detectedMode ?? merchant.yocoTestMode;
       if (yocoTestMode === null || yocoTestMode === undefined) {
         throw new BadRequestException('testMode is required');
       }
@@ -1045,20 +1057,19 @@ export class MerchantsService {
         Boolean(merchant.yocoWebhookSecret?.trim()) &&
         merchant.yocoWebhookUrl?.trim() === desiredWebhookUrl;
 
-      const webhook =
-        hasReusableWebhook
-          ? {
-              id: merchant.yocoWebhookId?.trim() ?? null,
-              secret: storedYocoWebhookSecret,
-              url: merchant.yocoWebhookUrl?.trim() ?? desiredWebhookUrl,
-            }
-          : await this.registerYocoWebhook({
-              merchantId: id,
-              publicKey: yocoPublicKey,
-              secretKey: yocoSecretKey,
-              testMode: yocoTestMode,
-              desiredWebhookUrl,
-            });
+      const webhook = hasReusableWebhook
+        ? {
+            id: merchant.yocoWebhookId?.trim() ?? null,
+            secret: storedYocoWebhookSecret,
+            url: merchant.yocoWebhookUrl?.trim() ?? desiredWebhookUrl,
+          }
+        : await this.registerYocoWebhook({
+            merchantId: id,
+            publicKey: yocoPublicKey,
+            secretKey: yocoSecretKey,
+            testMode: yocoTestMode,
+            desiredWebhookUrl,
+          });
 
       const updated = await this.prisma.merchant.update({
         where: { id },
@@ -1310,9 +1321,12 @@ export class MerchantsService {
   }
 
   private sanitizeGatewayField(key: string, value: unknown) {
-    const isRedactedSecret = ['apiKey', 'privateKey', 'publicKey', 'secretKey'].includes(
-      key,
-    );
+    const isRedactedSecret = [
+      'apiKey',
+      'privateKey',
+      'publicKey',
+      'secretKey',
+    ].includes(key);
     const isPresent =
       typeof value === 'string'
         ? value.trim().length > 0
@@ -1419,10 +1433,7 @@ export class MerchantsService {
     const configured = Boolean(siteCode && hasPrivateKey);
     const connected = Boolean(siteCode && hasPrivateKey && hasApiKey);
     const hasAnySavedState = Boolean(
-      siteCode ||
-        hasPrivateKey ||
-        hasApiKey ||
-        merchant.ozowIsTest !== null,
+      siteCode || hasPrivateKey || hasApiKey || merchant.ozowIsTest !== null,
     );
     const resolvedConfig = resolveOzowConfig({
       ozowIsTest: merchant.ozowIsTest,
@@ -1551,7 +1562,9 @@ export class MerchantsService {
   }
 
   private buildYocoWebhookName(merchantId: string, testMode: boolean) {
-    const compactMerchantId = merchantId.replace(/[^a-zA-Z0-9]/g, '').slice(0, 12);
+    const compactMerchantId = merchantId
+      .replace(/[^a-zA-Z0-9]/g, '')
+      .slice(0, 12);
     const mode = testMode ? 'test' : 'live';
     return `stackaura-${mode}-${compactMerchantId || 'merchant'}`;
   }

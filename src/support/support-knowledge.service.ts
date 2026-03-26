@@ -1,8 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import {
-  SupportCitation,
-  SupportKnowledgeMatch,
-} from './support.types';
+import { SupportCitation, SupportKnowledgeMatch } from './support.types';
 
 type KnowledgeEntry = SupportCitation & {
   content: string;

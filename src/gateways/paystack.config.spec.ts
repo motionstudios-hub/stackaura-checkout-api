@@ -40,6 +40,17 @@ describe('resolvePaystackConfig', () => {
     expect(detectPaystackModeFromSecretKey('sk_live_123')).toBe(false);
     expect(detectPaystackModeFromSecretKey('custom_secret')).toBeNull();
   });
+
+  it('uses the versioned Stackaura webhook URL', () => {
+    const resolved = resolvePaystackConfig({
+      paystackSecretKey: 'sk_live_secret',
+      paystackTestMode: false,
+    });
+
+    expect(resolved.webhookUrl).toBe(
+      'https://api.stackaura.co.za/v1/webhooks/paystack',
+    );
+  });
 });
 
 describe('resolvePaystackRedirectUrls', () => {

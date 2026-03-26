@@ -1,5 +1,3 @@
-
-
 import { Injectable, NotImplementedException } from '@nestjs/common';
 import * as crypto from 'crypto';
 import {
@@ -26,13 +24,17 @@ export class PayfastGateway implements GatewayAdapter {
         : '') || process.env.PAYFAST_MERCHANT_KEY?.trim();
 
     if (!merchantId || !merchantKey) {
-      throw new Error('PAYFAST_MERCHANT_ID and PAYFAST_MERCHANT_KEY are required');
+      throw new Error(
+        'PAYFAST_MERCHANT_ID and PAYFAST_MERCHANT_KEY are required',
+      );
     }
 
     const passphrase =
       (typeof input.config?.payfastPassphrase === 'string'
         ? input.config.payfastPassphrase.trim()
-        : '') || process.env.PAYFAST_PASSPHRASE?.trim() || '';
+        : '') ||
+      process.env.PAYFAST_PASSPHRASE?.trim() ||
+      '';
     const isSandbox = this.resolveSandbox(input);
 
     const returnUrl =

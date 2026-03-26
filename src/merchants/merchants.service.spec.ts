@@ -2,10 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { YocoGateway } from '../gateways/yoco.gateway';
 import { MerchantsService } from './merchants.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  decryptStoredSecret,
-  isEncryptedSecret,
-} from '../security/secrets';
+import { decryptStoredSecret, isEncryptedSecret } from '../security/secrets';
 
 describe('MerchantsService', () => {
   let service: MerchantsService;
@@ -124,8 +121,8 @@ describe('MerchantsService', () => {
       }),
     );
 
-    const ozowUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
-      .data as {
+    const ozowUpdateData = (prisma.merchant.update as jest.Mock).mock
+      .calls[0][0].data as {
       ozowPrivateKey: string;
       ozowApiKey: string;
     };
@@ -217,8 +214,8 @@ describe('MerchantsService', () => {
         }),
       }),
     );
-    const yocoUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
-      .data as {
+    const yocoUpdateData = (prisma.merchant.update as jest.Mock).mock
+      .calls[0][0].data as {
       yocoSecretKey: string;
       yocoWebhookSecret: string;
     };
@@ -299,9 +296,8 @@ describe('MerchantsService', () => {
         }),
       }),
     );
-    const paystackUpdateData = (
-      prisma.merchant.update as jest.Mock
-    ).mock.calls[0][0].data as {
+    const paystackUpdateData = (prisma.merchant.update as jest.Mock).mock
+      .calls[0][0].data as {
       paystackSecretKey: string;
     };
     expect(isEncryptedSecret(paystackUpdateData.paystackSecretKey)).toBe(true);
@@ -362,8 +358,8 @@ describe('MerchantsService', () => {
         }),
       }),
     );
-    const payfastUpdateData = (prisma.merchant.update as jest.Mock).mock.calls[0][0]
-      .data as {
+    const payfastUpdateData = (prisma.merchant.update as jest.Mock).mock
+      .calls[0][0].data as {
       payfastMerchantKey: string;
       payfastPassphrase: string;
     };
@@ -465,7 +461,9 @@ describe('MerchantsService', () => {
       email: 'owner@example.com',
       isActive: true,
     });
-    (prisma.membership.create as jest.Mock).mockResolvedValue({ id: 'mem-direct' });
+    (prisma.membership.create as jest.Mock).mockResolvedValue({
+      id: 'mem-direct',
+    });
     (prisma.apiKey.create as jest.Mock).mockResolvedValue({
       id: 'key-1',
       label: 'default',
@@ -682,7 +680,13 @@ describe('MerchantsService', () => {
       expect.objectContaining({
         reference: 'PAY-1',
         routeSummary: 'AUTO -> Paystack -> FAILED -> Yoco -> SUCCEEDED',
-        timelineStages: ['CREATED', 'INITIATED', 'FAILED', 'FALLBACK', 'SUCCEEDED'],
+        timelineStages: [
+          'CREATED',
+          'INITIATED',
+          'FAILED',
+          'FALLBACK',
+          'SUCCEEDED',
+        ],
       }),
     );
   });

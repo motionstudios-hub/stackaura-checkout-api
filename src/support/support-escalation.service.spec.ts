@@ -185,7 +185,8 @@ describe('SupportEscalationService formatting', () => {
     const triage = (service as any).buildTriage({
       conversation,
       merchantContext,
-      reason: 'Merchant requested human support from the dashboard support console',
+      reason:
+        'Merchant requested human support from the dashboard support console',
     });
     const subject = (service as any).buildEmailSubject(merchantContext, triage);
     const text = (service as any).buildEmailText(merchantContext, triage);
@@ -193,7 +194,8 @@ describe('SupportEscalationService formatting', () => {
       {
         conversation,
         merchantContext,
-        reason: 'Merchant requested human support from the dashboard support console',
+        reason:
+          'Merchant requested human support from the dashboard support console',
       },
       'wesupport@stackaura.co.za',
       'summary',
@@ -214,11 +216,15 @@ describe('SupportEscalationService formatting', () => {
     expect(text).toContain('Success rate: 0.0%');
     expect(text).toContain('Environment mismatch detected');
     expect(text).toContain('⚠️ Likely Cause');
-    expect(text).toContain('Mixed test/live environment causing gateway mismatch');
+    expect(text).toContain(
+      'Mixed test/live environment causing gateway mismatch',
+    );
     expect(text).toContain('📊 Latest Payment');
     expect(text).toContain('INV-e83abebaf65c → CANCELLED');
     expect(text).toContain('🧠 AI Summary');
-    expect(text).toContain('Mixed test/live environment causing gateway mismatch');
+    expect(text).toContain(
+      'Mixed test/live environment causing gateway mismatch',
+    );
     expect(text).toContain('🧾 Full Context');
     expect(text).not.toContain('"merchant"');
     expect(attachment.filename).toBe(

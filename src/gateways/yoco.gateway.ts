@@ -123,9 +123,8 @@ export class YocoGateway implements GatewayAdapter {
           merchantId: input.merchantId,
           reference: input.reference,
           requestPayload: this.sanitizeValue(requestPayload),
-          errorMessage:
-            error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack ?? null : null,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? (error.stack ?? null) : null,
         }),
       );
       throw error;
@@ -227,8 +226,9 @@ export class YocoGateway implements GatewayAdapter {
 
     return subscriptions
       .map((subscription) => this.parseWebhookSubscription(subscription, false))
-      .filter((subscription): subscription is YocoWebhookSubscription =>
-        subscription !== null,
+      .filter(
+        (subscription): subscription is YocoWebhookSubscription =>
+          subscription !== null,
       );
   }
 
@@ -468,7 +468,8 @@ export class YocoGateway implements GatewayAdapter {
   }
 
   private async readJsonOrTextPayload(response: Response) {
-    const contentType = response.headers.get('content-type')?.toLowerCase() ?? '';
+    const contentType =
+      response.headers.get('content-type')?.toLowerCase() ?? '';
     if (contentType.includes('application/json')) {
       try {
         return (await response.json()) as unknown;
@@ -517,7 +518,9 @@ export class YocoGateway implements GatewayAdapter {
     return Object.fromEntries(
       keys
         .map((key) => [key, headers.get(key)] as const)
-        .filter(([, value]) => typeof value === 'string' && value.trim().length > 0),
+        .filter(
+          ([, value]) => typeof value === 'string' && value.trim().length > 0,
+        ),
     );
   }
 

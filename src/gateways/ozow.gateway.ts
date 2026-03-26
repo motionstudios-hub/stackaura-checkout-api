@@ -180,7 +180,7 @@ export class OzowGateway implements GatewayAdapter {
           reference,
           transactionId,
           errorMessage: error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack ?? null : null,
+          errorStack: error instanceof Error ? (error.stack ?? null) : null,
         }),
       );
       throw error;
@@ -210,7 +210,11 @@ export class OzowGateway implements GatewayAdapter {
       );
     }
 
-    const record = this.pickTransactionRecord(payload, reference, transactionId);
+    const record = this.pickTransactionRecord(
+      payload,
+      reference,
+      transactionId,
+    );
     const providerStatus = this.pickString(record, ['Status']);
 
     return {
@@ -483,7 +487,13 @@ export class OzowGateway implements GatewayAdapter {
     if (topLevel) {
       records.push(topLevel);
 
-      for (const key of ['data', 'result', 'results', 'items', 'transactions']) {
+      for (const key of [
+        'data',
+        'result',
+        'results',
+        'items',
+        'transactions',
+      ]) {
         const value = topLevel[key];
         if (Array.isArray(value)) {
           for (const item of value) {

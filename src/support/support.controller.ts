@@ -21,14 +21,19 @@ import { SupportService } from './support.service';
 export class SupportController {
   constructor(private readonly supportService: SupportService) {}
 
-  @ApiOperation({ summary: 'List support conversations for the active merchant workspace' })
+  @ApiOperation({
+    summary: 'List support conversations for the active merchant workspace',
+  })
   @Get('conversations')
   async listConversations(
     @Req() req: SessionRequest,
     @Query('merchantId') merchantId: string,
   ) {
     this.assertSessionMerchantScope(req, merchantId);
-    return this.supportService.listConversations(req.sessionAuth!.user.id, merchantId);
+    return this.supportService.listConversations(
+      req.sessionAuth!.user.id,
+      merchantId,
+    );
   }
 
   @ApiOperation({ summary: 'Get a support conversation and its messages' })

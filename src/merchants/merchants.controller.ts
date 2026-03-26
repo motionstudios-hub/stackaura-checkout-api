@@ -60,7 +60,9 @@ export class MerchantsController {
     return this.merchantsService.createMerchantAccount(body);
   }
 
-  @ApiOperation({ summary: 'Get real merchant payment analytics for the dashboard' })
+  @ApiOperation({
+    summary: 'Get real merchant payment analytics for the dashboard',
+  })
   @UseGuards(SessionAuthGuard)
   @Get(':merchantId/analytics')
   async getMerchantAnalytics(
@@ -392,9 +394,12 @@ export class MerchantsController {
   }
 
   private sanitizeGatewayField(key: string, value: unknown) {
-    const isRedactedSecret = ['apiKey', 'privateKey', 'publicKey', 'secretKey'].includes(
-      key,
-    );
+    const isRedactedSecret = [
+      'apiKey',
+      'privateKey',
+      'publicKey',
+      'secretKey',
+    ].includes(key);
     const isPresent =
       typeof value === 'string'
         ? value.trim().length > 0
