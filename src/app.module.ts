@@ -13,6 +13,7 @@ import { SubscriptionScheduler } from './scheduler/subscription.scheduler';
 import { SupportModule } from './support/support.module';
 import { AdminModule } from './admin/admin.module';
 import { ShopifyModule } from './shopify/shopify.module';
+import { CommandCenterModule } from './command-center/command-center.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { ShopifyModule } from './shopify/shopify.module';
     SupportModule,
     AdminModule,
     ShopifyModule,
+    CommandCenterModule,
   ],
   controllers: [AppController],
   providers: [AppService, SubscriptionScheduler],
